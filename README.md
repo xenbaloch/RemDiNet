@@ -1,4 +1,4 @@
-# RemoveDistraction (RemDiNet)
+# Remove the Distraction (RemDiNet)
 Joint SNR and Semantic Attention Driven Low-Light Image Enhancement | Remove the Distractions
 
 The code will be made available soon. 
