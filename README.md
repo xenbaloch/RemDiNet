@@ -1,7 +1,7 @@
 # Remove the Distraction (RemDiNet)
-Joint SNR and Semantic Attention Driven Low-Light Image Enhancement | Remove the Distractions
+Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision | Remove the Distractions
+
 
 The code will be made available soon. 
-
 
 For details, contact: mzain771@outlook.com 
