@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import torch
-import torch.nn.functional as F
+import torch.nn. functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
@@ -19,10 +19,10 @@ from metrics_core import calculate_psnr, calculate_ms_ssim
 # Optional dependencies
 try:
     from metrics import CleanMetricsCalculator as ImprovedMetricsCalculator
-except ImportError:
+except ImportError: 
     ImprovedMetricsCalculator = None
 
-try:
+try: 
     from color_enhancement import enhance_colors_post_process
 except ImportError:
     def enhance_colors_post_process(tensor, **kwargs):
@@ -39,9 +39,9 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
     """Load model with automatic architecture detection"""
     try:
         checkpoint = torch.load(model_path, map_location=device)
-        state_dict = checkpoint.get('model_state_dict', checkpoint)
+        state_dict = checkpoint. get('model_state_dict', checkpoint)
 
-        # Infer num_iterations from state dict
+        # Infer num_iterations
         curve_weight_key = 'curve_estimator.curve_net.6.weight'
         if curve_weight_key in state_dict:
             output_channels = state_dict[curve_weight_key].shape[0]
@@ -49,11 +49,11 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
         else:
             num_iterations = 8
 
-        # Infer other parameters from state dict
+        # Infer other parameters
         use_snr_awareness = any(k.startswith('snr_distraction_module') for k in state_dict.keys())
         use_semantic_guidance = any(k.startswith('semantic_guidance') for k in state_dict.keys())
         use_learnable_snr = any(k.startswith('snr_estimator') for k in state_dict.keys())
-        use_contrast_refinement = any(k.startswith('contrast_refiner') for k in state_dict.keys())
+        use_contrast_refinement = any(k. startswith('contrast_refiner') for k in state_dict.keys())
 
         # Initialize model
         model = UnifiedLowLightEnhancer(
@@ -75,7 +75,7 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
                 print("❌ Model contains invalid weights")
                 return None
 
-        if 'best_psnr' in checkpoint:
+        if 'best_psnr' in checkpoint: 
             print(f"✅ Model loaded (trained PSNR: {checkpoint['best_psnr']:.2f} dB)")
         else:
             print("✅ Model loaded successfully")
@@ -87,21 +87,32 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
         return None
 
 
-def load_image(image_path: str, device: str = 'cuda') -> tuple:
-    """Load and preprocess image for model input"""
+def load_image(image_path: str, device: str = 'cuda', native_resolution: bool = True) -> tuple: 
+    """
+    Load and preprocess image for model input
+    
+    Args:
+        image_path: Path to input image
+        device: Device to load tensor on
+        native_resolution: If True, test at native resolution (manuscript mode)
+                          If False, resize to fixed size for speed
+    """
     try:
         image = Image.open(image_path).convert('RGB')
         original_size = (image.height, image.width)
 
-        # Transform: Resize → ToTensor → Normalize → Pad
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        # Transform:  ToTensor → Normalize → Pad (no resize for native resolution)
+        tensor = transforms.ToTensor()(image)
+        
+        # Apply ImageNet normalization
+        tensor = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], 
+            std=[0.229, 0.224, 0.225]
+        )(tensor)
+        
+        tensor = tensor.unsqueeze(0).to(device)
 
-        tensor = transform(image).unsqueeze(0).to(device)
-
-        # Pad to multiple of 32
+        # Pad to multiple of 32 for model compatibility
         _, _, H, W = tensor.shape
         pad_h = (32 - (H % 32)) % 32
         pad_w = (32 - (W % 32)) % 32
@@ -115,38 +126,43 @@ def load_image(image_path: str, device: str = 'cuda') -> tuple:
         return None, None
 
 
-def save_image(tensor: torch.Tensor, output_path: str, original_size: tuple = None) -> bool:
+def save_image(tensor: torch. Tensor, output_path: str, original_size: tuple = None) -> bool:
     """Save tensor as image"""
     try:
         # Prepare tensor
         if tensor.dim() == 4:
             tensor = tensor.squeeze(0)
-        tensor = torch.clamp(tensor, 0.0, 1.0).cpu()
+        tensor = torch.clamp(tensor, 0. 0, 1.0).cpu()
 
         # Convert to PIL
         image = transforms.ToPILImage()(tensor)
 
         # Crop to original size if needed
-        if original_size:
+        if original_size: 
             orig_h, orig_w = original_size
             if image.height > orig_h or image.width > orig_w:
                 image = image.crop((0, 0, orig_w, orig_h))
 
-        # Save
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        image.save(output_path, quality=95)
+        # Save with high quality
+        os.makedirs(os.path. dirname(output_path), exist_ok=True)
+        image.save(output_path, quality=95, optimize=False)
         return True
 
-    except Exception as e:
-        print(f"❌ Failed to save image: {e}")
+    except Exception as e: 
+        print(f"❌ Failed to save image:  {e}")
         return False
 
 
 def enhance_image(model, image_path: str, output_path: str, device: str = 'cuda',
-                  enable_post_process: bool = True) -> Dict[str, Any]:
-    """Enhance single image"""
-    # Load image
-    image_tensor, original_size = load_image(image_path, device)
+                  enable_post_process: bool = True, native_resolution: bool = True) -> Dict[str, Any]:
+    """
+    Enhance single image
+    
+    Args:
+        native_resolution: Test at native resolution (manuscript:  True)
+    """
+    # Load image at native resolution
+    image_tensor, original_size = load_image(image_path, device, native_resolution)
     if image_tensor is None:
         return {'error': f'Failed to load {image_path}'}
 
@@ -166,19 +182,19 @@ def enhance_image(model, image_path: str, output_path: str, device: str = 'cuda'
 
             enhanced = torch.clamp(enhanced, 0.0, 1.0)
 
-            # ENABLED BY DEFAULT: Post-process color enhancement
+            # Post-process color enhancement (enabled by default)
             if enable_post_process:
                 enhanced = enhance_colors_post_process(
                     enhanced,
-                    vibrance_boost=1.05,  # More visible improvement
-                    saturation_boost=1.0,  # More visible improvement
-                    gamma=1.0  # More visible improvement
+                    vibrance_boost=1.05,
+                    saturation_boost=1.0,
+                    gamma=1.0
                 )
 
             # Crop to original size
             if enhanced.shape[2:] != original_size:
                 orig_h, orig_w = original_size
-                enhanced = enhanced[:, :, :orig_h, :orig_w]
+                enhanced = enhanced[: , :, :orig_h, :orig_w]
 
         inference_time = time.time() - start_time
 
@@ -196,36 +212,41 @@ def enhance_image(model, image_path: str, output_path: str, device: str = 'cuda'
             'inference_time': inference_time,
             'brightness': brightness,
             'contrast': contrast,
-            'output_path': output_path
+            'output_path': output_path,
+            'resolution': f"{original_size[1]}×{original_size[0]}"
         }
 
     except Exception as e:
         return {'error': f'Enhancement failed: {str(e)}'}
 
 
-def test_single_image(model_path: str, image_path: str, output_path: str,
+def test_single_image(model_path: str, image_path:  str, output_path: str,
                       gt_path: str = None, device: str = 'cuda',
-                      enable_post_process: bool = True) -> Dict[str, Any]:
+                      enable_post_process: bool = True,
+                      native_resolution: bool = True) -> Dict[str, Any]:
     """Test enhancement on single image with optional GT evaluation"""
     # Load model
     model = load_model(model_path, device)
-    if model is None:
+    if model is None: 
         return {'error': 'Failed to load model'}
 
     # Enhance image
-    result = enhance_image(model, image_path, output_path, device, enable_post_process)
+    result = enhance_image(model, image_path, output_path, device, 
+                          enable_post_process, native_resolution)
     if 'error' in result:
         return result
+
+    print(f"✅ Enhanced:  {result. get('resolution', 'unknown')} @ {result['inference_time']:.3f}s")
 
     # Calculate metrics with GT if available
     if gt_path and os.path.exists(gt_path):
         try:
-            # Load GT and enhanced as [0,1] tensors
-            gt_tensor, _ = load_image(gt_path, device)
-            if gt_tensor is not None:
-                gt_tensor = denormalize_imagenet(gt_tensor)  # Convert to [0,1]
+            # Load GT and enhanced at native resolution
+            gt_tensor, _ = load_image(gt_path, device, native_resolution)
+            if gt_tensor is not None: 
+                gt_tensor = denormalize_imagenet(gt_tensor)
 
-                enhanced_tensor, _ = load_image(output_path, device)
+                enhanced_tensor, _ = load_image(output_path, device, native_resolution)
                 if enhanced_tensor is not None:
                     enhanced_tensor = denormalize_imagenet(enhanced_tensor)
 
@@ -235,14 +256,14 @@ def test_single_image(model_path: str, image_path: str, output_path: str,
                     gt_tensor = gt_tensor[:, :, :min_h, :min_w]
                     enhanced_tensor = enhanced_tensor[:, :, :min_h, :min_w]
 
-                    # Calculate metrics using metrics_core
+                    # Calculate metrics
                     psnr = calculate_psnr(enhanced_tensor, gt_tensor, normalized=False).item()
                     ssim = calculate_ms_ssim(enhanced_tensor, gt_tensor, normalized=False).item()
 
                     result['psnr'] = psnr
                     result['ssim'] = ssim
 
-                    print(f"📊 PSNR: {psnr:.2f} dB, SSIM: {ssim:.4f}")
+                    print(f"📊 PSNR: {psnr:.2f} dB, SSIM: {ssim:. 4f}")
 
         except Exception as e:
             print(f"⚠️  Metrics calculation failed: {e}")
@@ -257,8 +278,8 @@ def get_test_images(test_dir: str) -> List[str]:
     images = set()
 
     for ext in extensions:
-        images.update(test_path.glob(ext))
-        images.update(test_path.glob(ext.upper()))
+        images.update(test_path. glob(ext))
+        images.update(test_path. glob(ext.upper()))
 
     return sorted([str(p) for p in images])
 
@@ -274,16 +295,16 @@ def find_ground_truth(image_path: str, gt_dir: str) -> Optional[str]:
     # Try multiple naming patterns
     patterns = [
         filename,
-        base_name + '.png',
+        base_name + '. png',
         base_name + '.jpg',
-        base_name.replace('_low', '') + '.png',
+        base_name. replace('_low', '') + '.png',
         base_name.replace('_lowlight', '') + '.png',
         base_name.replace('_dark', '') + '.png',
         base_name + '_high.png',
         base_name + '_gt.png',
     ]
 
-    for pattern in patterns:
+    for pattern in patterns: 
         gt_path = os.path.join(gt_dir, pattern)
         if os.path.exists(gt_path):
             return gt_path
@@ -293,8 +314,14 @@ def find_ground_truth(image_path: str, gt_dir: str) -> Optional[str]:
 
 def test_dataset(model_path: str, test_dir: str, output_dir: str,
                  gt_dir: str = None, device: str = 'cuda', max_images: int = None,
-                 enable_post_process: bool = True) -> tuple:
-    """Test enhancement on dataset"""
+                 enable_post_process: bool = True, 
+                 native_resolution: bool = True) -> tuple:
+    """
+    Test enhancement on dataset
+    
+    Args: 
+        native_resolution: Test at native resolution (manuscript: True)
+    """
     # Load model once
     model = load_model(model_path, device)
     if model is None:
@@ -302,10 +329,12 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
 
     # Get test images
     test_images = get_test_images(test_dir)
-    if max_images:
+    if max_images: 
         test_images = test_images[:max_images]
 
     print(f"🚀 Testing {len(test_images)} images")
+    if native_resolution:
+        print("📐 Native resolution mode (manuscript configuration)")
     if enable_post_process:
         print("🎨 Color post-processing enabled")
 
@@ -318,31 +347,32 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
     all_results = []
     successful = 0
     failed = 0
+    total_time = 0.0
 
     for i, image_path in enumerate(test_images, 1):
         base_name = Path(image_path).stem
         output_path = os.path.join(output_dir, f"{base_name}_enhanced.png")
-        gt_path = None  # ensure defined even when no GT is found
+        gt_path = None
 
-        # Progress indicator (every 10 images)
+        # Progress indicator
         if i % 10 == 0 or i == len(test_images):
             print(f"📷 Progress: {i}/{len(test_images)}")
 
         # Enhance image
-        result = enhance_image(model, image_path, output_path, device, enable_post_process)
-        if 'error' in result:
+        result = enhance_image(model, image_path, output_path, device, 
+                              enable_post_process, native_resolution)
+        if 'error' in result: 
             failed += 1
             continue
 
         successful += 1
-        # --- No-reference metrics (always) ---
-        # Uses CleanMetricsCalculator.calculate_all_metrics(enhanced, target=None, original)
-        # (provides niqe, brightness/contrast, enhancement/contrast ratios, LOE, colorfulness)
+        total_time += result. get('inference_time', 0. 0)
+
+        # No-reference metrics
         if metrics_calc is not None:
             try:
-                # Load original & enhanced and convert back to [0,1]
-                orig_t, _ = load_image(image_path, device)
-                enh_t, _ = load_image(output_path, device)
+                orig_t, _ = load_image(image_path, device, native_resolution)
+                enh_t, _ = load_image(output_path, device, native_resolution)
                 if orig_t is not None and enh_t is not None:
                     orig_t = denormalize_imagenet(orig_t)
                     enh_t = denormalize_imagenet(enh_t)
@@ -351,21 +381,12 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
                         enhanced=enh_t, target=None, original=orig_t
                     )
 
-                    # Keep staple no-ref metrics in the per-image result
-                    for k in (
-                            "niqe",
-                            "brightness",
-                            "contrast",
-                            "enhancement_ratio",
-                            "contrast_ratio",
-                            "loe",  # NEW
-                            "colorfulness",  # NEW
-                            "colorfulness_delta",  # NEW
-                    ):
+                    for k in ("niqe", "brightness", "contrast", "enhancement_ratio",
+                             "contrast_ratio", "loe", "colorfulness", "colorfulness_delta"):
                         if k in no_ref:
                             result[k] = float(no_ref[k])
 
-                    # ΔNIQE: input − enhanced (positive = improvement)
+                    # ΔNIQE
                     try:
                         niqe_input = float(metrics_calc.calculate_niqe(orig_t))
                         result["niqe_input"] = niqe_input
@@ -377,24 +398,22 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
                 pass
 
         # Calculate metrics if GT available
-        if gt_dir and metrics_calc:
+        if gt_dir and metrics_calc: 
             gt_path = find_ground_truth(image_path, gt_dir)
             if gt_path:
                 try:
-                    # Load tensors
-                    gt_tensor, _ = load_image(gt_path, device)
-                    enhanced_tensor, _ = load_image(output_path, device)
+                    gt_tensor, _ = load_image(gt_path, device, native_resolution)
+                    enhanced_tensor, _ = load_image(output_path, device, native_resolution)
 
                     if gt_tensor is not None and enhanced_tensor is not None:
-                        # Convert to [0,1] for metrics
                         gt_tensor = denormalize_imagenet(gt_tensor)
                         enhanced_tensor = denormalize_imagenet(enhanced_tensor)
 
                         # Crop to same size
                         min_h = min(gt_tensor.size(2), enhanced_tensor.size(2))
                         min_w = min(gt_tensor.size(3), enhanced_tensor.size(3))
-                        gt_tensor = gt_tensor[:, :, :min_h, :min_w]
-                        enhanced_tensor = enhanced_tensor[:, :, :min_h, :min_w]
+                        gt_tensor = gt_tensor[:, : , :min_h, :min_w]
+                        enhanced_tensor = enhanced_tensor[:, : , :min_h, :min_w]
 
                         # Calculate metrics
                         psnr = calculate_psnr(enhanced_tensor, gt_tensor, normalized=False).item()
@@ -403,8 +422,8 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
                         result['psnr'] = psnr
                         result['ssim'] = ssim
 
-                except Exception:
-                    pass  # Skip if metrics fail
+                except Exception: 
+                    pass
 
         result['input_path'] = image_path
         result['gt_path'] = gt_path if gt_dir else None
@@ -413,31 +432,29 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
     # Calculate summary statistics
     summary = {
         'total_images': len(test_images),
-        'successful': successful,
+        'successful':  successful,
         'failed': failed,
         'success_rate': successful / len(test_images) if test_images else 0.0,
         'post_processing_enabled': enable_post_process,
+        'native_resolution': native_resolution,
+        'avg_inference_time': total_time / successful if successful > 0 else 0.0,
     }
 
-    # Calculate metrics statistics
+    # Aggregate metrics
     psnr_values = [r["psnr"] for r in all_results if "psnr" in r]
     ssim_values = [r["ssim"] for r in all_results if "ssim" in r]
-    time_values = [r["inference_time"] for r in all_results if "inference_time" in r]
-
-    # No-reference aggregates
     niqe_values = [r["niqe"] for r in all_results if "niqe" in r]
     niqe_impr_values = [r["niqe_improvement"] for r in all_results if "niqe_improvement" in r]
     loe_values = [r["loe"] for r in all_results if "loe" in r]
     cf_delta_values = [r["colorfulness_delta"] for r in all_results if "colorfulness_delta" in r]
 
     if psnr_values:
-        summary.update({
+        summary. update({
             "avg_psnr": float(np.mean(psnr_values)),
             "std_psnr": float(np.std(psnr_values)),
-            "avg_ssim": float(np.mean(ssim_values)) if ssim_values else 0.0,
-            "avg_time": float(np.mean(time_values)) if time_values else 0.0,
+            "avg_ssim": float(np. mean(ssim_values)) if ssim_values else 0.0,
         })
-        print(f"📊 Results: PSNR = {summary['avg_psnr']:.2f} ± {summary['std_psnr']:.2f} dB")
+        print(f"\n📊 Results:  PSNR = {summary['avg_psnr']:.2f} ± {summary['std_psnr']:.2f} dB")
         if ssim_values:
             print(f"📊 Results: SSIM = {summary['avg_ssim']:.4f}")
 
@@ -445,18 +462,22 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
         summary.update({
             "avg_niqe": float(np.mean(niqe_values)),
             "std_niqe": float(np.std(niqe_values)),
-            "avg_time": float(np.mean(time_values)) if time_values else 0.0,
         })
         print(f"📊 Results: NIQE = {summary['avg_niqe']:.2f} ± {summary['std_niqe']:.2f}")
+    
     if niqe_impr_values:
         summary["avg_niqe_improvement"] = float(np.mean(niqe_impr_values))
-        print(f"📊 ΔNIQE (input − output): {summary['avg_niqe_improvement']:.2f}  (↑ is better)")
+        print(f"📊 ΔNIQE:  {summary['avg_niqe_improvement']:.2f} (↑ is better)")
+    
     if loe_values:
         summary["avg_loe"] = float(np.mean(loe_values))
-        print(f"📊 LOE (lower better): {summary['avg_loe']:.3f}")
-    if cf_delta_values:
+        print(f"📊 LOE: {summary['avg_loe']:.3f} (↓ is better)")
+    
+    if cf_delta_values: 
         summary["avg_colorfulness_delta"] = float(np.mean(cf_delta_values))
-        print(f"📊 ΔColorfulness: {summary['avg_colorfulness_delta']:.3f}")
+        print(f"📊 ΔColorfulness: {summary['avg_colorfulness_delta']:. 3f}")
+
+    print(f"⚡ Avg inference time: {summary['avg_inference_time']:.3f}s/image")
 
     # Save results
     results_file = os.path.join(output_dir, 'test_results.json')
@@ -469,10 +490,13 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Clean Low-Light Enhancement Testing')
+    parser = argparse.ArgumentParser(
+        description='RemDiNet Testing (Manuscript Configuration:  Native Resolution)'
+    )
 
     # Model and data
-    parser.add_argument('--model_path', type=str, required=True, help='Path to model checkpoint')
+    parser.add_argument('--model_path', type=str, required=True, 
+                       help='Path to model checkpoint')
 
     # Testing modes
     group = parser.add_mutually_exclusive_group(required=True)
@@ -480,8 +504,10 @@ def main():
     group.add_argument('--single_image', type=str, help='Path to single image')
 
     # Output paths
-    parser.add_argument('--output_dir', type=str, default='./test_results', help='Output directory')
-    parser.add_argument('--output_image', type=str, help='Output path for single image')
+    parser.add_argument('--output_dir', type=str, default='./test_results', 
+                       help='Output directory')
+    parser.add_argument('--output_image', type=str, 
+                       help='Output path for single image')
 
     # Ground truth
     parser.add_argument('--gt_dir', type=str, help='Ground truth directory (optional)')
@@ -489,30 +515,42 @@ def main():
 
     # Options
     parser.add_argument('--max_images', type=int, help='Maximum images to process')
-    parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cuda', 'cpu'])
+    parser.add_argument('--device', type=str, default='auto', 
+                       choices=['auto', 'cuda', 'cpu'])
 
-    # NEW: Color post-processing control (enabled by default)
+    # Resolution mode (Default:  native)
+    parser.add_argument('--fixed_size', action='store_true',
+                       help='Use fixed size (faster, but manuscript uses native resolution)')
+    
+    # Color post-processing
     parser.add_argument('--no_post_process', action='store_true',
-                        help='Disable color post-processing (enabled by default)')
+                       help='Disable color post-processing')
 
     args = parser.parse_args()
 
     # Setup device
-    if args.device == 'auto':
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if args.device == 'auto': 
+        device = 'cuda' if torch.cuda. is_available() else 'cpu'
     else:
         device = args.device
 
-    print(f"🔧 Device: {device}")
+    print("=" * 80)
+    print("RemDiNet Testing (Manuscript Configuration)")
+    print("=" * 80)
+    print(f"Device: {device}")
+    print(f"Resolution mode: {'Fixed size' if args.fixed_size else 'Native (manuscript)'}")
+    print("=" * 80)
 
     # Validate model path
     if not os.path.exists(args.model_path):
         print(f"❌ Model not found: {args.model_path}")
         return 1
 
-    # Post-processing setting
+    # Settings
     enable_post_process = not args.no_post_process
-    if not enable_post_process:
+    native_resolution = not args.fixed_size  # Default: True
+
+    if not enable_post_process: 
         print("🚫 Color post-processing disabled")
 
     try:
@@ -526,15 +564,17 @@ def main():
                 args.output_dir, f"{Path(args.single_image).stem}_enhanced.png"
             )
 
-            print(f"🖼️  Processing: {args.single_image}")
-            result = test_single_image(args.model_path, args.single_image, output_path,
-                                       args.gt_image, device, enable_post_process)
+            print(f"🖼️  Processing:  {args.single_image}")
+            result = test_single_image(
+                args.model_path, args.single_image, output_path,
+                args.gt_image, device, enable_post_process, native_resolution
+            )
 
             if 'error' in result:
                 print(f"❌ {result['error']}")
                 return 1
 
-            print(f"✅ Enhanced image saved: {output_path}")
+            print(f"✅ Enhanced image saved:  {output_path}")
             print(f"⚡ Inference time: {result['inference_time']:.3f}s")
 
         else:
@@ -543,10 +583,13 @@ def main():
                 print(f"❌ Test directory not found: {args.test_dir}")
                 return 1
 
-            summary, _ = test_dataset(args.model_path, args.test_dir, args.output_dir,
-                                      args.gt_dir, device, args.max_images, enable_post_process)
+            summary, _ = test_dataset(
+                args.model_path, args.test_dir, args.output_dir,
+                args.gt_dir, device, args.max_images, 
+                enable_post_process, native_resolution
+            )
 
-            print(f"✅ Processed {summary['successful']}/{summary['total_images']} images")
+            print(f"\n✅ Processed {summary['successful']}/{summary['total_images']} images")
             if summary['failed'] > 0:
                 print(f"⚠️  {summary['failed']} images failed")
 
@@ -554,6 +597,8 @@ def main():
 
     except Exception as e:
         print(f"❌ Testing failed: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
