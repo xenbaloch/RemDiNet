@@ -8,22 +8,8 @@
 
 RemDiNet is a PyTorch implementation for low-light image enhancement that leverages semantic information and SNR (signal-to-noise ratio) guidance for robust, color-preserving improvements, even with limited paired data. 
 
-> **Paper**: *Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
-> **Code & Pre-trained Models**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
-
-
-## ✨ Features
-
-- **🎯 Semantic-Aware Enhancement**: Uses MobileNetV3 backbone for semantic guidance
-- **📡 SNR-Based Distraction Removal**: Intelligent noise and distraction detection
-- **🎨 Advanced Color Preservation**: Multiple color consistency mechanisms with trainable global color affine transformation
-- **🔄 Flexible Supervision**: Works with paired, unpaired, or mixed training data
-- **🎓 Staged Training**: Three-stage training strategy (reconstruction → structure → perceptual)
-- **⚡ Efficient Architecture**: Lightweight with gradient accumulation support
-- **🔧 Post-Processing**: Optional color enhancement at inference time
-- **📈 Analysis Tools**: RGB histogram visualization and detailed metrics logging
-
----
+> **Paper (In Submission)**: *Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
+> **Code**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
 
 ## 🔧 Installation
 
@@ -102,9 +88,9 @@ RemDiNet works with popular low-light datasets:
 
 - **LOL** (Low-Light dataset)
 - **LOL-v2** (Real and Synthetic)
-- **MIT-Adobe FiveK**
-- **SICE**
-- Custom datasets
+- **MIT-Adobe FiveK (sRGB)**
+- **SID (sRGB)**
+- Custom low-light datasets
 
 ### Data Pairing Strategies
 
@@ -128,30 +114,6 @@ RemDiNet uses a **three-stage training strategy**:
 3. **Stage 3 (20% epochs)**: Perceptual refinement with VGG-based loss
 
 Smooth transitions between stages prevent training instability.
-
-### Monitoring Training
-
-Training progress is displayed in real-time: 
-
-```
-Epoch | Stage | Train PSNR | Val PSNR | Val SSIM | Saturation | Mix | Status
---------------------------------------------------------------------------------
-    0 |     1 |       15.3 |     16.2 |   0.7234 |       0.21 | 1.00 | OK
-    5 |     1 |       18.7 |     19.1 |   0.7891 |       0.23 | 1.00 | OK
-   15 |     2 |       21.4 |     21.8 |   0.8456 |       0.19 | 0.50 | OK (transition)
-```
-
-## 💾 Pre-trained Models
-
-Pre-trained weights will be available at:
-- [GitHub Releases](https://github.com/xenbaloch/RemDiNet/releases)
-
-**Coming soon:**
-- Model trained on LOL dataset
-- Model trained on LOL-v2-real
-- Lightweight variant (no semantic guidance)
-
----
 
 ---
 
