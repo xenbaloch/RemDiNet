@@ -1,7 +1,5 @@
 # Remove the Distraction (RemDiNet)
 
-**Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision**
-
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue. svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.12+-red.svg)](https://pytorch.org/)
 [![License:  MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -76,11 +74,19 @@ your_dataset/
 │   ├── img001.png
 │   ├── img002.png
 │   └── ...
+├── val_data/          # Low-light validation images (optional)
+│   └── ...
+├── val_gt/            # Validation ground truth (optional)
+│   └── ...
 ├── test_data/         # Low-light test images
 │   └── ... 
 └── test_gt/           # Ground truth for evaluation (optional)
     └── ...
 ```
+
+**Note:** 
+- If `val_data/` and `val_gt/` are not provided, the training script will automatically split `train_data/` using the `--val_split` ratio (default: 0.2).
+- Ground truth directories (`train_gt/`, `val_gt/`, `test_gt/`) are optional for unsupervised training but recommended for evaluation.
 
 ### Supported Datasets
 
@@ -179,6 +185,7 @@ copies of the Software...
 
 ## 🙏 Acknowledgments
 
+- ZeroDCE 
 - MobileNetV3 pre-trained weights from torchvision
 - Metrics implementations inspired by LPIPS, MS-SSIM libraries
 - Dataset support for LOL, LOL-v2, and related benchmarks
@@ -188,8 +195,8 @@ copies of the Software...
 ## 🔄 Updates
 
 - **2026-01**:  Initial public release
-- Pre-trained models coming soon
-- Paper submission in progress
+- Pre-trained models (coming soon)
+- Paper submission (in progress)
 
 ---
 
