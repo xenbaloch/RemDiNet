@@ -6,7 +6,7 @@
 
 RemDiNet is a PyTorch implementation for low-light image enhancement that leverages semantic information and SNR (signal-to-noise ratio) guidance for robust, color-preserving improvements, even with limited paired data. 
 
-> **Paper (In Submission)**: *Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
+> **Paper (In Submission)**: *Remove the Distraction: Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
 > **Code**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
 
 ## 🔧 Installation
@@ -123,35 +123,6 @@ Smooth transitions between stages prevent training instability.
 
 ---
 
-## 📂 Project Structure
-
-```
-RemDiNet/
-├── model. py                  # Main model architecture
-├── Myloss.py                  # Custom loss functions
-├── lowlight_train.py          # Training script
-├── lowlight_test.py           # Testing/inference script
-├── dataloader.py              # Dataset loader with augmentations
-├── metrics.py                 # Image quality metrics
-├── metrics_core.py            # Core PSNR/SSIM implementations
-├── loss_weights.py            # Loss weight configurations
-├── color_enhancement.py       # Color enhancement modules
-├── histo_chart.py             # RGB histogram visualization
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-└── LICENSE                    # MIT License
-```
-
----
-
-### Performance Tips
-
-- Use GPU for 10-100× speedup
-- Use mixed precision training (add `torch.cuda.amp` if needed)
-- Preprocess/resize large images before batch processing
-- Use gradient accumulation for larger effective batch sizes
-
----
 
 
 ---
@@ -183,15 +154,6 @@ copies of the Software...
 
 ---
 
-## 🙏 Acknowledgments
-
-- ZeroDCE 
-- MobileNetV3 pre-trained weights from torchvision
-- Metrics implementations inspired by LPIPS, MS-SSIM libraries
-- Dataset support for LOL, LOL-v2, and related benchmarks
-
----
-
 ## 🔄 Updates
 
 - **2026-01**:  Initial public release
@@ -201,8 +163,3 @@ copies of the Software...
 ---
 
 **Happy Enhancing! 🌟**
-
-If you find this work useful, please consider giving it a ⭐ on GitHub! 
-
-The source code and pre-trained models will be available at https://github.com/xenbaloch/RemDiNet. 
-
