@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import torch
-import torch.nn. functional as F
+import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
@@ -39,7 +39,7 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
     """Load model with automatic architecture detection"""
     try:
         checkpoint = torch.load(model_path, map_location=device)
-        state_dict = checkpoint. get('model_state_dict', checkpoint)
+        state_dict = checkpoint.get('model_state_dict', checkpoint)
 
         # Infer num_iterations
         curve_weight_key = 'curve_estimator.curve_net.6.weight'
@@ -53,7 +53,7 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
         use_snr_awareness = any(k.startswith('snr_distraction_module') for k in state_dict.keys())
         use_semantic_guidance = any(k.startswith('semantic_guidance') for k in state_dict.keys())
         use_learnable_snr = any(k.startswith('snr_estimator') for k in state_dict.keys())
-        use_contrast_refinement = any(k. startswith('contrast_refiner') for k in state_dict.keys())
+        use_contrast_refinement = any(k.startswith('contrast_refiner') for k in state_dict.keys())
 
         # Initialize model
         model = UnifiedLowLightEnhancer(
@@ -132,7 +132,7 @@ def save_image(tensor: torch. Tensor, output_path: str, original_size: tuple = N
         # Prepare tensor
         if tensor.dim() == 4:
             tensor = tensor.squeeze(0)
-        tensor = torch.clamp(tensor, 0. 0, 1.0).cpu()
+        tensor = torch.clamp(tensor, 0.0, 1.0).cpu()
 
         # Convert to PIL
         image = transforms.ToPILImage()(tensor)
@@ -144,7 +144,7 @@ def save_image(tensor: torch. Tensor, output_path: str, original_size: tuple = N
                 image = image.crop((0, 0, orig_w, orig_h))
 
         # Save with high quality
-        os.makedirs(os.path. dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         image.save(output_path, quality=95, optimize=False)
         return True
 
@@ -236,7 +236,7 @@ def test_single_image(model_path: str, image_path:  str, output_path: str,
     if 'error' in result:
         return result
 
-    print(f"✅ Enhanced:  {result. get('resolution', 'unknown')} @ {result['inference_time']:.3f}s")
+    print(f"✅ Enhanced:  {result.get('resolution', 'unknown')} @ {result['inference_time']:.3f}s")
 
     # Calculate metrics with GT if available
     if gt_path and os.path.exists(gt_path):
@@ -263,7 +263,7 @@ def test_single_image(model_path: str, image_path:  str, output_path: str,
                     result['psnr'] = psnr
                     result['ssim'] = ssim
 
-                    print(f"📊 PSNR: {psnr:.2f} dB, SSIM: {ssim:. 4f}")
+                    print(f"📊 PSNR: {psnr:.2f} dB, SSIM: {ssim:.4f}")
 
         except Exception as e:
             print(f"⚠️  Metrics calculation failed: {e}")
@@ -278,8 +278,8 @@ def get_test_images(test_dir: str) -> List[str]:
     images = set()
 
     for ext in extensions:
-        images.update(test_path. glob(ext))
-        images.update(test_path. glob(ext.upper()))
+        images.update(test_path.glob(ext))
+        images.update(test_path.glob(ext.upper()))
 
     return sorted([str(p) for p in images])
 
@@ -295,9 +295,9 @@ def find_ground_truth(image_path: str, gt_dir: str) -> Optional[str]:
     # Try multiple naming patterns
     patterns = [
         filename,
-        base_name + '. png',
+        base_name + '.png',
         base_name + '.jpg',
-        base_name. replace('_low', '') + '.png',
+        base_name.replace('_low', '') + '.png',
         base_name.replace('_lowlight', '') + '.png',
         base_name.replace('_dark', '') + '.png',
         base_name + '_high.png',
@@ -366,7 +366,7 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
             continue
 
         successful += 1
-        total_time += result. get('inference_time', 0. 0)
+        total_time += result.get('inference_time', 0.0)
 
         # No-reference metrics
         if metrics_calc is not None:
@@ -449,10 +449,10 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
     cf_delta_values = [r["colorfulness_delta"] for r in all_results if "colorfulness_delta" in r]
 
     if psnr_values:
-        summary. update({
+        summary.update({
             "avg_psnr": float(np.mean(psnr_values)),
             "std_psnr": float(np.std(psnr_values)),
-            "avg_ssim": float(np. mean(ssim_values)) if ssim_values else 0.0,
+            "avg_ssim": float(np.mean(ssim_values)) if ssim_values else 0.0,
         })
         print(f"\n📊 Results:  PSNR = {summary['avg_psnr']:.2f} ± {summary['std_psnr']:.2f} dB")
         if ssim_values:
@@ -475,7 +475,7 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
     
     if cf_delta_values: 
         summary["avg_colorfulness_delta"] = float(np.mean(cf_delta_values))
-        print(f"📊 ΔColorfulness: {summary['avg_colorfulness_delta']:. 3f}")
+        print(f"📊 ΔColorfulness: {summary['avg_colorfulness_delta']:.3f}")
 
     print(f"⚡ Avg inference time: {summary['avg_inference_time']:.3f}s/image")
 
@@ -530,7 +530,7 @@ def main():
 
     # Setup device
     if args.device == 'auto': 
-        device = 'cuda' if torch.cuda. is_available() else 'cpu'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
     else:
         device = args.device
 
