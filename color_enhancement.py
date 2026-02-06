@@ -10,14 +10,14 @@ class EnhancedGlobalColorCorrection(nn.Module):
 
     def __init__(self):
         super().__init__()
-        # More flexible color transform matrix
+        # More flexible color transform matrix (start at identity)
         self.weight = nn.Parameter(torch.eye(3).view(3, 3, 1, 1))
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
 
-        # Learnable vibrance/saturation control
-        self.vibrance_factor = nn.Parameter(torch.tensor(1.2))  # Start with 20% boost
+        # Learnable vibrance/saturation control (start at 1.0 = neutral)
+        self.vibrance_factor = nn.Parameter(torch.tensor(1.0))
 
-        # Per-channel gamma correction
+        # Per-channel gamma correction (start at 1.0 = neutral)
         self.channel_gamma = nn.Parameter(torch.tensor([1.0, 1.0, 1.0]))
 
         # Register post-optimization hook to clamp weights
@@ -28,11 +28,12 @@ class EnhancedGlobalColorCorrection(nn.Module):
 
         def clamp_weights_hook(module, input):
             with torch.no_grad():
-                self.weight.data.clamp_(0.8, 1.2)  # mild 20% deviation
-                self.bias.data.clamp_(-0.05, 0.05)  # almost neutral bias
-                self.vibrance_factor.data.clamp_(0.9, 1.3)
-                # NARROWED: gamma clamp to 0.8 - 1.0 (was 0.8 - 1.2)
-                self.channel_gamma.data.clamp_(0.8, 1.0)
+                # Tightened: near-identity clamps
+                self.weight.data.clamp_(0.9, 1.1)
+                self.bias.data.clamp_(-0.03, 0.03)
+                self.vibrance_factor.data.clamp_(0.95, 1.15)
+                # Tightened: gamma clamp to 0.9 - 1.1 (instead of 0.8 - 1.0)
+                self.channel_gamma.data.clamp_(0.9, 1.1)
 
         self.register_forward_pre_hook(clamp_weights_hook)
 
@@ -189,13 +190,13 @@ class AdaptiveColorEnhancement(nn.Module):
 
 # Test time color enhancement function
 def enhance_colors_post_process(image_tensor,
-                                vibrance_boost=1.2,  # Enhanced from 1.0
-                                gamma=0.9,  # Enhanced from 1.0
-                                saturation_boost=1.1):  # Enhanced from 1.0
+                                vibrance_boost=1.0,  # Neutral (was 1.2)
+                                gamma=1.0,  # Neutral (was 0.9)
+                                saturation_boost=1.0):  # Neutral (was 1.1)
     """
     Post-processing color enhancement for test time
     Can be applied after model inference for extra color pop
-    ENHANCED: Better default values for more visible color improvement
+    NEUTRALIZED: Default values are now neutral (no enhancement)
     """
     # Ensure input is in [0, 1] range
     img = torch.clamp(image_tensor, 0, 1)

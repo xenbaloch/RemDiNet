@@ -35,7 +35,9 @@ def denormalize_imagenet(tensor: torch.Tensor) -> torch.Tensor:
     return torch.clamp(tensor * std + mean, 0.0, 1.0)
 
 
-def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Module]:
+def load_model(model_path: str, device: str = 'cuda', 
+               disable_color_affine: bool = False,
+               disable_color_enhancer: bool = False) -> Optional[torch.nn.Module]:
     """Load model with automatic architecture detection"""
     try:
         checkpoint = torch.load(model_path, map_location=device)
@@ -63,6 +65,8 @@ def load_model(model_path: str, device: str = 'cuda') -> Optional[torch.nn.Modul
             use_learnable_snr=use_learnable_snr,
             use_contrast_refinement=use_contrast_refinement,
             snr_tiny_mode=use_snr_awareness and not use_learnable_snr,
+            disable_color_affine=disable_color_affine,
+            disable_color_enhancer=disable_color_enhancer,
         )
 
         # Load state dict
@@ -186,7 +190,7 @@ def enhance_image(model, image_path: str, output_path: str, device: str = 'cuda'
             if enable_post_process:
                 enhanced = enhance_colors_post_process(
                     enhanced,
-                    vibrance_boost=1.05,
+                    vibrance_boost=1.0,
                     saturation_boost=1.0,
                     gamma=1.0
                 )
@@ -223,10 +227,12 @@ def enhance_image(model, image_path: str, output_path: str, device: str = 'cuda'
 def test_single_image(model_path: str, image_path:  str, output_path: str,
                       gt_path: str = None, device: str = 'cuda',
                       enable_post_process: bool = True,
-                      native_resolution: bool = True) -> Dict[str, Any]:
+                      native_resolution: bool = True,
+                      disable_color_affine: bool = False,
+                      disable_color_enhancer: bool = False) -> Dict[str, Any]:
     """Test enhancement on single image with optional GT evaluation"""
     # Load model
-    model = load_model(model_path, device)
+    model = load_model(model_path, device, disable_color_affine, disable_color_enhancer)
     if model is None: 
         return {'error': 'Failed to load model'}
 
@@ -315,7 +321,9 @@ def find_ground_truth(image_path: str, gt_dir: str) -> Optional[str]:
 def test_dataset(model_path: str, test_dir: str, output_dir: str,
                  gt_dir: str = None, device: str = 'cuda', max_images: int = None,
                  enable_post_process: bool = True, 
-                 native_resolution: bool = True) -> tuple:
+                 native_resolution: bool = True,
+                 disable_color_affine: bool = False,
+                 disable_color_enhancer: bool = False) -> tuple:
     """
     Test enhancement on dataset
     
@@ -323,7 +331,7 @@ def test_dataset(model_path: str, test_dir: str, output_dir: str,
         native_resolution: Test at native resolution (manuscript: True)
     """
     # Load model once
-    model = load_model(model_path, device)
+    model = load_model(model_path, device, disable_color_affine, disable_color_enhancer)
     if model is None:
         raise RuntimeError("Failed to load model")
 
@@ -525,6 +533,10 @@ def main():
     # Color post-processing
     parser.add_argument('--no_post_process', action='store_true',
                        help='Disable color post-processing')
+    parser.add_argument('--no_color_affine', action='store_true',
+                       help='Disable in-model color affine transformation')
+    parser.add_argument('--no_color_enhancer', action='store_true',
+                       help='Disable in-model color enhancer')
 
     args = parser.parse_args()
 
@@ -549,9 +561,15 @@ def main():
     # Settings
     enable_post_process = not args.no_post_process
     native_resolution = not args.fixed_size  # Default: True
+    disable_color_affine = args.no_color_affine
+    disable_color_enhancer = args.no_color_enhancer
 
     if not enable_post_process: 
         print("🚫 Color post-processing disabled")
+    if disable_color_affine:
+        print("🚫 In-model color affine disabled")
+    if disable_color_enhancer:
+        print("🚫 In-model color enhancer disabled")
 
     try:
         if args.single_image:
@@ -567,7 +585,8 @@ def main():
             print(f"🖼️  Processing:  {args.single_image}")
             result = test_single_image(
                 args.model_path, args.single_image, output_path,
-                args.gt_image, device, enable_post_process, native_resolution
+                args.gt_image, device, enable_post_process, native_resolution,
+                disable_color_affine, disable_color_enhancer
             )
 
             if 'error' in result:
@@ -586,7 +605,8 @@ def main():
             summary, _ = test_dataset(
                 args.model_path, args.test_dir, args.output_dir,
                 args.gt_dir, device, args.max_images, 
-                enable_post_process, native_resolution
+                enable_post_process, native_resolution,
+                disable_color_affine, disable_color_enhancer
             )
 
             print(f"\n✅ Processed {summary['successful']}/{summary['total_images']} images")

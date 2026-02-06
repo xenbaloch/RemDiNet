@@ -237,19 +237,17 @@ class TransformerDecoder(nn.Module):
 class GlobalColourAffine(nn.Module):
     """Enhanced color correction with gradient-preserving weight management"""
 
-    def __init__(self, enable_vibrance: bool = True):
+    def __init__(self, enable_vibrance: bool = False):
         super().__init__()
-        init_matrix = torch.tensor([
-            [1.1, 0.0, 0.0],
-            [0.0, 1.1, 0.0],
-            [0.0, 0.0, 1.1]
-        ]).view(3, 3, 1, 1)
+        # Initialize to identity (neutral) instead of 1.1x boost
+        init_matrix = torch.eye(3).view(3, 3, 1, 1)
         self.weight = nn.Parameter(init_matrix)
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
 
         self.enable_vibrance = enable_vibrance
         if enable_vibrance:
-            self.vibrance_factor = nn.Parameter(torch.tensor(1.3))
+            # Start at 1.0 (neutral) instead of 1.3
+            self.vibrance_factor = nn.Parameter(torch.tensor(1.0))
 
         # Register a post-optimization hook to clamp weights
         self._register_weight_clamping()
@@ -260,18 +258,30 @@ class GlobalColourAffine(nn.Module):
         def clamp_weights_hook(module, input):
             # This runs before forward pass, but after optimizer updates
             with torch.no_grad():
-                # Allow modest cross-channel mixing and diagonal drift,
-                # Off-diagonals were previously clamped to 0 by identity bounds.
-                self.weight.data.clamp_(-0.15, 1.25)
-                self.bias.data.clamp_(-0.05, 0.05)
+                # Tightened: near-identity clamps to prevent strong color shifts
+                self.weight.data.clamp_(0.95, 1.05)
+                self.bias.data.clamp_(-0.02, 0.02)
 
                 if self.enable_vibrance:
-                    self.vibrance_factor.data.clamp_(1.0, 1.25)
+                    # Tightened: max 10% vibrance boost instead of 25%
+                    self.vibrance_factor.data.clamp_(1.0, 1.1)
 
         self.register_forward_pre_hook(clamp_weights_hook)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # NO weight clamping here - gradients are preserved!
+        
+        # Optional: simple gray-world white balance
+        if self.training:  # Only during training to avoid test-time shifts
+            channel_means = x.mean(dim=[2, 3], keepdim=True)
+            overall_mean = channel_means.mean()
+            if overall_mean > 0:
+                balance_factors = overall_mean / (channel_means + 1e-8)
+                # Apply mild correction (max 5% adjustment)
+                balance_factors = torch.clamp(balance_factors, 0.95, 1.05)
+                x = x * balance_factors
+                x = torch.clamp(x, 0.0, 1.0)
+        
         w = self.weight.expand(-1, -1, *x.shape[2:])
         y = torch.einsum('bchw,ichw->bihw', x, w) + self.bias
 
@@ -704,7 +714,9 @@ class UnifiedLowLightEnhancer(nn.Module):
             use_learnable_snr: bool = False,
             use_task_saliency: bool = False,
             use_contrast_refinement: bool = False,
-            snr_tiny_mode: bool = False
+            snr_tiny_mode: bool = False,
+            disable_color_affine: bool = False,
+            disable_color_enhancer: bool = False
     ):
         super().__init__()
 
@@ -715,9 +727,11 @@ class UnifiedLowLightEnhancer(nn.Module):
         self.use_learnable_snr = use_learnable_snr
         self.use_task_saliency = use_task_saliency
         self.use_contrast_refinement = use_contrast_refinement
+        self.disable_color_affine = disable_color_affine
+        self.disable_color_enhancer = disable_color_enhancer
 
-        # Color enhancement components
-        self.colour_head = GlobalColourAffine(enable_vibrance=True)
+        # Color enhancement components (vibrance off by default)
+        self.colour_head = GlobalColourAffine(enable_vibrance=False)
         try:
             self.color_enhancer = EnhancedGlobalColorCorrection()
         except Exception:
@@ -834,11 +848,12 @@ class UnifiedLowLightEnhancer(nn.Module):
             blended = sharp * curve_enhanced + (1.0 - sharp) * semantic_enhanced
             final = torch.clamp(blended, 0.0, 1.0)
 
-            # ── NEW ▸ trainable global colour correction ───────────────────────
+            # ── NEW ▸ trainable global colour correction (with toggles) ───────────────────────
             try:
-                final = self.colour_head(final)  # 3×3 affine
-                if self.color_enhancer is not None:  # tiny CNN
-                    final = self.color_enhancer(final)
+                if not self.disable_color_affine:
+                    final = self.colour_head(final)  # 3×3 affine
+                if not self.disable_color_enhancer and self.color_enhancer is not None:
+                    final = self.color_enhancer(final)  # tiny CNN
             except Exception:
                 pass
 
@@ -889,6 +904,14 @@ class UnifiedLowLightEnhancer(nn.Module):
     def enable_semantic_guidance(self, enable: bool = True):
         """Enable/disable semantic guidance at runtime"""
         self.use_semantic_guidance = enable
+
+    def enable_color_affine(self, enable: bool = True):
+        """Enable/disable color affine at runtime"""
+        self.disable_color_affine = not enable
+
+    def enable_color_enhancer(self, enable: bool = True):
+        """Enable/disable color enhancer at runtime"""
+        self.disable_color_enhancer = not enable
 
 
 # Keep compatibility aliases
