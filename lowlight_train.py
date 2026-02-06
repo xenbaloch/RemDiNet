@@ -4,7 +4,6 @@ import argparse
 import time
 import random
 import numpy as np
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -21,6 +20,7 @@ from loss_weights import (
     EARLY_STOPPING_CONFIG, ramp_colour
 )
 
+
 def setup_seeds():
     """Set random seeds for reproducibility"""
     random.seed(42)
@@ -29,8 +29,9 @@ def setup_seeds():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(42)
 
-def create_loss_function(stage:  int, device: str):
-    """Create stage-specific loss function using loss_weights. py"""
+
+def create_loss_function(stage: int, device: str):
+    """Create stage-specific loss function"""
     from Myloss import SimplifiedDistractionAwareLoss, SimpleReconstructionLoss
 
     weights = get_stage_weights(stage)
@@ -40,14 +41,15 @@ def create_loss_function(stage:  int, device: str):
     else:
         return SimplifiedDistractionAwareLoss(device=device, **weights)
 
-class MinimalTrainer:
-    """Minimal trainer with clean logging and warm stage transitions"""
 
-    def __init__(self, model, device, config, resume_ckpt:  str | None = None):
-        self.model = model. to(device)
+class MinimalTrainer:
+    """Trainer with clean logging and staged training strategy"""
+
+    def __init__(self, model, device, config, resume_ckpt: str | None = None):
+        self.model = model.to(device)
         self.device = device
         self.config = config
-        self.max_epochs:  int | None = None
+        self.max_epochs: int | None = None
 
         # Training state
         self.epoch = 0
@@ -64,7 +66,7 @@ class MinimalTrainer:
         # Stage transition tracking
         self.stage_switch_epoch = 0
         self.loss_mix = 0.0
-        self. old_criterion = None
+        self.old_criterion = None
 
         # Training history
         self.history = {
@@ -90,9 +92,9 @@ class MinimalTrainer:
             self.criterion.model_affine_ref = self.model.colour_head
 
         # ═══════════════════════════════════════════════════════════════
-        # OPTIMIZER CONFIGURATION 
-        # ═══════════════════════════════════════════════════════════════
-        
+        # OPTIMIZER CONFIGURATION
+        # ════��══════════════════════════════════════════════════════════
+
         curve_params = [p for n, p in model.named_parameters() if 'curve_estimator' in n]
         mask_params = [p for n, p in model.named_parameters() if 'mask_predictor' in n]
         other_params = [
@@ -101,13 +103,14 @@ class MinimalTrainer:
         ]
 
         self.optimizer = AdamW([
-            {'params': curve_params, 'lr': 1e-4, 'name': 'curve'},      # Manuscript: 1e-4
-            {'params': mask_params, 'lr': 1e-4, 'name': 'mask'},         # Manuscript: 1e-4
-            {'params': other_params, 'lr': 1e-5, 'name': 'other'},       # Manuscript: 1e-5
-        ], weight_decay=3e-4)  # Manuscript: 3e-4
+            {'params': curve_params, 'lr': 1e-4, 'name': 'curve'},
+            {'params': mask_params, 'lr': 1e-4, 'name': 'mask'},
+            {'params': other_params, 'lr': 1e-5, 'name': 'other'},
+        ], weight_decay=3e-4)
 
+        # FIXED: Removed 'verbose' parameter
         self.scheduler = ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.5, patience=8, verbose=False
+            self.optimizer, mode='max', factor=0.5, patience=8
         )
 
         # Early stopping
@@ -119,7 +122,7 @@ class MinimalTrainer:
         os.makedirs(os.path.join(self.output_dir, 'checkpoints'), exist_ok=True)
 
         # Checkpointing/monitor config
-        self.save_best_stage = int(config. get('save_best_stage', 3))
+        self.save_best_stage = int(config.get('save_best_stage', 3))
         self.monitor_stage3 = str(config.get('monitor_stage3', 'composite')).lower()
         self.s3_psnr_weight = float(config.get('s3_psnr_weight', 0.7))
         self.s3_ssim_weight = float(config.get('s3_ssim_weight', 0.3))
@@ -133,38 +136,38 @@ class MinimalTrainer:
         self.model.load_state_dict(ckpt['model_state_dict'], strict=False)
         try:
             self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-        except Exception: 
+        except Exception:
             pass
 
-        self.epoch = ckpt. get('epoch', 0) + 1
+        self.epoch = ckpt.get('epoch', 0) + 1
         self.stage = ckpt.get('stage', 1)
         self.best_psnr = ckpt.get('best_psnr', 0.0)
         self.best_ssim = ckpt.get('best_ssim', 0.0)
         self.history = ckpt.get('training_history', self.history)
 
-        self.criterion = self.loss_functions[self. stage]
+        self.criterion = self.loss_functions[self.stage]
         print(f"🔄  Resumed from '{os.path.basename(path)}' "
               f"(epoch {self.epoch}, stage {self.stage})")
 
     def update_stage(self):
-        """Update training stage with warm transitions"""
+        """Update training stage with smooth transitions"""
         if self.epoch < self.stage_transitions[0]:
             new_stage = 1
         elif self.epoch < self.stage_transitions[1]:
             new_stage = 2
-        else: 
+        else:
             new_stage = 3
 
         if new_stage != self.stage:
-            print(f"🔄 Stage {self.stage} → {new_stage} (warm transition)")
+            print(f"🔄 Stage {self.stage} → {new_stage} (smooth transition)")
 
             self.old_criterion = self.criterion
             self.criterion = self.loss_functions[new_stage]
             if hasattr(self.criterion, "model_affine_ref"):
-                self.criterion.model_affine_ref = self.model. colour_head
+                self.criterion.model_affine_ref = self.model.colour_head
 
             self.stage = new_stage
-            self. stage_switch_epoch = self.epoch
+            self.stage_switch_epoch = self.epoch
             self.loss_mix = 0.0
 
             # Reset early stopping
@@ -188,7 +191,7 @@ class MinimalTrainer:
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max=remaining, eta_min=1e-6)
 
     def get_mixed_loss(self, results, target, input_img):
-        """Get mixed loss during warm transition periods"""
+        """Get mixed loss during transition periods"""
         if self.stage == 1 or self.old_criterion is None:
             return self.criterion(results, target, input_img, self.epoch)
 
@@ -209,7 +212,7 @@ class MinimalTrainer:
             mixed_loss = (1 - self.loss_mix) * old_loss + self.loss_mix * new_loss
 
             if isinstance(new_loss_out, dict):
-                out = new_loss_out. copy()
+                out = new_loss_out.copy()
                 out['total_loss'] = mixed_loss
                 out['mix_factor'] = self.loss_mix
                 return out
@@ -220,9 +223,9 @@ class MinimalTrainer:
             for p in self.model.mask_predictor.parameters():
                 p.requires_grad_(True)
 
-            # Slow the mask by 10×
+            # Slow the mask learning rate
             for g in self.optimizer.param_groups:
-                if g. get('name') == 'mask':
+                if g.get('name') == 'mask':
                     g['lr'] *= 0.10
 
         if self.stage == 3 and epochs_since_switch < 5 and self.old_criterion is not None:
@@ -239,7 +242,7 @@ class MinimalTrainer:
                 return out
             return mixed_loss
 
-        return self. criterion(results, target, input_img, self.epoch)
+        return self.criterion(results, target, input_img, self.epoch)
 
     def calculate_saturation(self, tensor):
         """Calculate color saturation"""
@@ -250,7 +253,7 @@ class MinimalTrainer:
 
     def train_epoch(self, train_loader):
         """Train one epoch"""
-        self.model. train()
+        self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
 
         # Cosine-ramp colour weights for Stage-2 warm-up
@@ -274,23 +277,23 @@ class MinimalTrainer:
         supervised_batches = 0
 
         for i, (low_light, ground_truth) in enumerate(train_loader):
-            low_light = low_light.to(self. device)
+            low_light = low_light.to(self.device)
             low_light_rgb = denormalize_imagenet(low_light)
             has_gt = ground_truth is not None
 
             if has_gt:
-                ground_truth = ground_truth. to(self.device)
+                ground_truth = ground_truth.to(self.device)
 
             try:
                 # Forward pass
                 results = self.model(low_light)
-                enhanced = results. get('enhanced', results) if isinstance(results, dict) else results
+                enhanced = results.get('enhanced', results) if isinstance(results, dict) else results
 
                 # Check color saturation
                 saturation = self.calculate_saturation(enhanced)
                 epoch_sat += saturation
 
-                # Use mixed loss during warm transitions
+                # Use mixed loss during transitions
                 loss_out = self.get_mixed_loss(results,
                                                ground_truth if has_gt else None,
                                                low_light_rgb)
@@ -307,11 +310,11 @@ class MinimalTrainer:
                 # Step only every grad_accum batches
                 if (i + 1) % self.grad_accum == 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
-                    self.optimizer. step()
+                    self.optimizer.step()
                     self.optimizer.zero_grad()
 
                 # Accumulate metrics
-                epoch_loss += loss. item()
+                epoch_loss += loss.item()
                 valid_batches += 1
 
                 if has_gt:
@@ -324,23 +327,23 @@ class MinimalTrainer:
                     torch.cuda.empty_cache()
                     print("⚠️  OOM – batch skipped")
                     continue
-                import traceback, sys
+                import traceback
                 traceback.print_exc()
                 sys.exit(1)
 
         # Step once more if there is a remainder micro-batch
         total_batches = valid_batches
         if total_batches % self.grad_accum != 0:
-            torch.nn. utils.clip_grad_norm_(self.model.parameters(), 0.25)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
             self.optimizer.step()
             self.optimizer.zero_grad()
 
         return {
             'loss': epoch_loss / max(valid_batches, 1),
-            'psnr':  epoch_psnr / max(supervised_batches, 1),
+            'psnr': epoch_psnr / max(supervised_batches, 1),
             'saturation': epoch_sat / max(valid_batches, 1),
             'supervised': supervised_batches,
-            'total':  valid_batches
+            'total': valid_batches
         }
 
     def validate(self, val_loader):
@@ -352,13 +355,13 @@ class MinimalTrainer:
         total_sat = 0.0
         count = 0
 
-        with torch. no_grad():
+        with torch.no_grad():
             for low_light, ground_truth in val_loader:
                 if ground_truth is None:
                     continue
 
                 try:
-                    low_light = low_light.to(self. device)
+                    low_light = low_light.to(self.device)
                     ground_truth = ground_truth.to(self.device)
 
                     results = self.model(low_light)
@@ -367,27 +370,27 @@ class MinimalTrainer:
                     # Ensure same size
                     h = min(enhanced.size(2), ground_truth.size(2))
                     w = min(enhanced.size(3), ground_truth.size(3))
-                    enhanced = enhanced[:, :, : h, :w]
-                    ground_truth = ground_truth[: , :, :h, :w]
+                    enhanced = enhanced[:, :, :h, :w]
+                    ground_truth = ground_truth[:, :, :h, :w]
 
                     # Calculate metrics
                     psnr = calculate_psnr(enhanced, ground_truth, normalized=False)
                     ssim = calculate_ms_ssim(enhanced, ground_truth, normalized=False)
                     saturation = self.calculate_saturation(enhanced)
 
-                    total_psnr += psnr. item()
+                    total_psnr += psnr.item()
                     total_ssim += ssim.item()
                     total_sat += saturation
                     count += 1
 
-                except Exception: 
+                except Exception:
                     continue
 
         if count == 0:
-            return {'psnr': 0.0, 'ssim': 0.0, 'saturation':  0.0}
+            return {'psnr': 0.0, 'ssim': 0.0, 'saturation': 0.0}
 
         return {
-            'psnr':  total_psnr / count,
+            'psnr': total_psnr / count,
             'ssim': total_ssim / count,
             'saturation': total_sat / count
         }
@@ -399,8 +402,8 @@ class MinimalTrainer:
         min_delta = config['min_delta']
 
         if score > self.best_score + min_delta:
-            self. best_score = score
-            self. patience_count = 0
+            self.best_score = score
+            self.patience_count = 0
             return False
         else:
             self.patience_count += 1
@@ -412,7 +415,7 @@ class MinimalTrainer:
             'epoch': self.epoch,
             'stage': self.stage,
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self. optimizer.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
             'best_psnr': self.best_psnr,
             'best_ssim': self.best_ssim,
             'config': self.config,
@@ -425,18 +428,18 @@ class MinimalTrainer:
     def train(self, train_loader, val_loader, max_epochs):
         """Main training loop"""
         self.max_epochs = int(max_epochs)
-        
+
         # Stage fractions
         s1_frac = float(self.config.get('stage1_frac', 0.25))
-        s3_frac = float(self. config.get('stage3_frac', 0.20))
+        s3_frac = float(self.config.get('stage3_frac', 0.20))
         s1 = max(1, int(round(s1_frac * self.max_epochs)))
         s3 = max(1, int(round(s3_frac * self.max_epochs)))
         s2_end = max(s1 + 1, self.max_epochs - s3)
-        
-        self.stage_transitions = [s1, s2_end]
-        print(f"🧭 Stage plan — S1:0–{s1 - 1}, S2:{s1}–{s2_end - 1}, S3:{s2_end}–{self.max_epochs - 1}")
 
-        print(f"Training:  {len(train_loader. dataset)} train, {len(val_loader.dataset)} val samples")
+        self.stage_transitions = [s1, s2_end]
+        print(f"🧭 Training stages: S1 (0-{s1 - 1}), S2 ({s1}-{s2_end - 1}), S3 ({s2_end}-{self.max_epochs - 1})")
+
+        print(f"Training: {len(train_loader.dataset)} train, {len(val_loader.dataset)} val samples")
         print("Epoch | Stage | Train PSNR | Val PSNR | Val SSIM | Saturation | Mix | Status")
         print("-" * 80)
 
@@ -449,7 +452,7 @@ class MinimalTrainer:
             # Train
             train_metrics = self.train_epoch(train_loader)
 
-            self.history["train_loss"]. append(train_metrics["loss"])
+            self.history["train_loss"].append(train_metrics["loss"])
             self.history["train_psnr"].append(train_metrics["psnr"])
             self.history["learning_rate"].append(self.optimizer.param_groups[0]["lr"])
 
@@ -465,18 +468,18 @@ class MinimalTrainer:
                 val_metrics = self.validate(val_loader)
 
                 self.history["val_psnr"].append(val_metrics["psnr"])
-                self.history["val_ssim"]. append(val_metrics["ssim"])
+                self.history["val_ssim"].append(val_metrics["ssim"])
 
                 val_psnr = val_metrics['psnr']
                 val_ssim = val_metrics['ssim']
                 val_sat = val_metrics['saturation']
 
-                if val_psnr > self. best_psnr:  self.best_psnr = val_psnr
+                if val_psnr > self.best_psnr: self.best_psnr = val_psnr
                 if val_ssim > self.best_ssim: self.best_ssim = val_ssim
 
                 # Color penalty
-                color_penalty = max(0, (COLOR_THRESHOLDS['min_saturation'] - val_sat) * 
-                                   COLOR_THRESHOLDS['saturation_penalty_factor'])
+                color_penalty = max(0, (COLOR_THRESHOLDS['min_saturation'] - val_sat) *
+                                    COLOR_THRESHOLDS['saturation_penalty_factor'])
                 adjusted_psnr = val_psnr - color_penalty
 
                 # Stage-aware best saving
@@ -489,8 +492,8 @@ class MinimalTrainer:
                     if self.monitor_stage3 == 'psnr':
                         s3_score = adjusted_psnr
                     elif self.monitor_stage3 == 'ssim':
-                        s3_score = (20. 0 * val_ssim) - color_penalty
-                    else: 
+                        s3_score = (20.0 * val_ssim) - color_penalty
+                    else:
                         s3_score = (self.s3_psnr_weight * val_psnr) + \
                                    (self.s3_ssim_weight * (20.0 * val_ssim)) - color_penalty
                     monitor_for_es = s3_score
@@ -503,7 +506,7 @@ class MinimalTrainer:
                 status_parts = []
                 gap = train_metrics['psnr'] - val_psnr
                 if epoch > 5 and gap > 4.0:
-                    status_parts. append("OVERFIT")
+                    status_parts.append("OVERFIT")
                 if val_sat < COLOR_THRESHOLDS['min_saturation']:
                     status_parts.append("LOW_COLOR")
                 if color_penalty > 0:
@@ -513,8 +516,8 @@ class MinimalTrainer:
                 mix_str = f"{self.loss_mix:.2f}" if hasattr(self, 'loss_mix') and self.loss_mix < 1.0 else "1.00"
 
                 print(
-                    f"{epoch: 5d} | {self.stage:5d} | {train_metrics['psnr']:10.1f} | {val_psnr:8.1f} | "
-                    f"{val_ssim:8.3f} | {val_sat: 10.2f} | {mix_str: 3s} | {status} "
+                    f"{epoch:5d} | {self.stage:5d} | {train_metrics['psnr']:10.1f} | {val_psnr:8.1f} | "
+                    f"{val_ssim:8.3f} | {val_sat:10.2f} | {mix_str:3s} | {status} "
                     f"({train_metrics['supervised']}/{train_metrics['total']} supervised)"
                 )
 
@@ -522,7 +525,7 @@ class MinimalTrainer:
                 if isinstance(self.scheduler, ReduceLROnPlateau):
                     self.scheduler.step(val_psnr)
                 else:
-                    self.scheduler. step()
+                    self.scheduler.step()
 
                 # Early stopping
                 if self.check_early_stopping(monitor_for_es):
@@ -537,8 +540,8 @@ class MinimalTrainer:
         total_time = time.time() - start_time
         print("-" * 80)
         print(f"Training completed in {total_time / 3600:.1f} hours")
-        print(f"Best PSNR: {self. best_psnr:.2f} dB")
-        print(f"Best SSIM: {self. best_ssim:.4f}")
+        print(f"Best PSNR: {self.best_psnr:.2f} dB")
+        print(f"Best SSIM: {self.best_ssim:.4f}")
 
 
 def create_datasets(config):
@@ -565,7 +568,7 @@ def create_datasets(config):
         generator=torch.Generator().manual_seed(42)
     )
 
-    train_subset = torch.utils.data.Subset(full_dataset, train_indices. indices)
+    train_subset = torch.utils.data.Subset(full_dataset, train_indices.indices)
 
     # Validation dataset (no augmentation)
     val_dataset = ImprovedLowLightDataset(
@@ -582,75 +585,94 @@ def create_datasets(config):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='RemDiNet Training (Manuscript Configuration)')
+    parser = argparse.ArgumentParser(description='RemDiNet Low-Light Enhancement Training')
 
     # Essential arguments
-    parser.add_argument('--data_root', type=str, required=True)
-    parser.add_argument('--experiment_name', type=str, default='remdinet_training')
-    parser.add_argument('--output_dir', type=str, default='./experiments')
+    parser.add_argument('--data_root', type=str, required=True,
+                        help='Root directory containing train_data/ and train_gt/')
+    parser.add_argument('--experiment_name', type=str, default='remdinet_training',
+                        help='Name for this training run')
+    parser.add_argument('--output_dir', type=str, default='./experiments',
+                        help='Directory to save outputs')
 
     # Model configuration
-    parser.add_argument('--num_iterations', type=int, default=8)
-    parser.add_argument('--use_semantic_guidance', action='store_true', default=False)
-    parser.add_argument('--use_snr_awareness', action='store_true', default=False)
-    parser.add_argument('--use_learnable_snr', action='store_true', default=True)
-    parser.add_argument('--use_contrast_refinement', action='store_true', default=False)
+    parser.add_argument('--num_iterations', type=int, default=8,
+                        help='Number of curve iterations')
+    parser.add_argument('--use_semantic_guidance', action='store_true',
+                        help='Enable semantic guidance module')
+    parser.add_argument('--use_snr_awareness', action='store_true',
+                        help='Enable SNR-aware distraction removal')
+    parser.add_argument('--use_learnable_snr', action='store_true', default=True,
+                        help='Use learnable SNR estimation')
+    parser.add_argument('--use_contrast_refinement', action='store_true',
+                        help='Enable contrast refinement')
 
-    # ═══════════════════════════════════════════════════════════════
-    # TRAINING CONFIGURATION
-    # ═══════════════════════════════════════════════════════════════
-    parser.add_argument('--batch_size', type=int, default=8,          
-                        help='Batch size (manuscript: 8)')
-    parser.add_argument('--num_epochs', type=int, default=200,         
-                        help='Total epochs (manuscript: 200)')
-    parser.add_argument('--image_size', type=int, default=512,         
-                        help='Training crop size (manuscript: 512×512)')
-    # ═══════════════════════════════════════════════════════════════
-    
+    # Training configuration
+    parser.add_argument('--batch_size', type=int, default=8,
+                        help='Batch size for training')
+    parser.add_argument('--num_epochs', type=int, default=200,
+                        help='Total number of training epochs')
+    parser.add_argument('--image_size', type=int, default=512,
+                        help='Training image size (crops to image_size × image_size)')
     parser.add_argument('--gt_pairing', type=str, default='flexible',
-                        help='GT pairing strategy:  flexible (manuscript default)')
-    parser.add_argument('--val_split', type=float, default=0.2)
+                        choices=['strict', 'flexible', 'none'],
+                        help='GT pairing strategy: strict (exact match), flexible (smart match), none (unsupervised)')
+    parser.add_argument('--val_split', type=float, default=0.2,
+                        help='Validation split ratio (0.0-1.0)')
 
-    # Stage lengths
-    parser.add_argument('--stage1_frac', type=float, default=0.25)
-    parser.add_argument('--stage3_frac', type=float, default=0.20)
+    # Stage configuration
+    parser.add_argument('--stage1_frac', type=float, default=0.25,
+                        help='Fraction of total epochs for Stage 1')
+    parser.add_argument('--stage3_frac', type=float, default=0.20,
+                        help='Fraction of total epochs for Stage 3')
 
     # Stage-3 monitoring
-    parser.add_argument('--save_best_stage', type=int, default=3, choices=[1, 2, 3])
+    parser.add_argument('--save_best_stage', type=int, default=3, choices=[1, 2, 3],
+                        help='Save best model based on this stage')
     parser.add_argument('--monitor_stage3', type=str, default='composite',
-                        choices=['psnr', 'ssim', 'composite'])
-    parser.add_argument('--s3_psnr_weight', type=float, default=0.7)
-    parser.add_argument('--s3_ssim_weight', type=float, default=0.3)
+                        choices=['psnr', 'ssim', 'composite'],
+                        help='Metric to monitor in Stage 3')
+    parser.add_argument('--s3_psnr_weight', type=float, default=0.7,
+                        help='PSNR weight for composite score in Stage 3')
+    parser.add_argument('--s3_ssim_weight', type=float, default=0.3,
+                        help='SSIM weight for composite score in Stage 3')
 
     # Gradient accumulation
     parser.add_argument('--accum_batches', type=int, default=1,
-                        help='Gradient accumulation steps')
+                        help='Gradient accumulation steps (effective batch = batch_size × accum_batches)')
 
     # System
-    parser.add_argument('--device', type=str, default='auto')
-    parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cuda', 'cpu'],
+                        help='Device to use for training')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from')
     parser.add_argument('--num_workers', type=int, default=4,
-                        help='DataLoader workers (0 for debugging)')
+                        help='Number of DataLoader workers (0 for debugging)')
 
     args = parser.parse_args()
 
     # Setup
     setup_seeds()
-    device = 'cuda' if torch.cuda. is_available() and args.device != 'cpu' else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() and args.device != 'cpu' else 'cpu'
     experiment_dir = os.path.join(args.output_dir, args.experiment_name)
     os.makedirs(experiment_dir, exist_ok=True)
 
     print("=" * 80)
-    print("RemDiNet Training (Manuscript Configuration)")
+    print("RemDiNet Low-Light Enhancement Training")
     print("=" * 80)
     print(f"Experiment: {args.experiment_name}")
     print(f"Device: {device}")
-    print(f"Batch size: {args.batch_size} (manuscript: 8)")
-    print(f"Epochs: {args.num_epochs} (manuscript: 200)")
-    print(f"Image size: {args.image_size}×{args.image_size} (manuscript: 512×512)")
-    print(f"Learning rates: curve/mask=1e-4, other=1e-5 (manuscript)")
-    print(f"Weight decay: 3e-4 (manuscript)")
-    print(f"GT pairing: {args.gt_pairing} (manuscript:  flexible)")
+    print(f"Configuration:")
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Epochs: {args.num_epochs}")
+    print(f"  Image size: {args.image_size}×{args.image_size}")
+    print(f"  Learning rates: curve/mask=1e-4, other=1e-5")
+    print(f"  Weight decay: 3e-4")
+    print(f"  GT pairing: {args.gt_pairing}")
+    print(f"Model features:")
+    print(f"  Semantic guidance: {args.use_semantic_guidance}")
+    print(f"  SNR awareness: {args.use_snr_awareness}")
+    print(f"  Learnable SNR: {args.use_learnable_snr}")
     print("=" * 80)
 
     # Configuration
@@ -659,16 +681,16 @@ def main():
         'image_size': args.image_size,
         'gt_pairing': args.gt_pairing,
         'val_split': args.val_split,
-        'grad_accum':  args.accum_batches,
+        'grad_accum': args.accum_batches,
         'output_dir': experiment_dir,
         'save_best_stage': args.save_best_stage,
         'monitor_stage3': args.monitor_stage3,
         's3_psnr_weight': args.s3_psnr_weight,
         's3_ssim_weight': args.s3_ssim_weight,
         'stage1_frac': args.stage1_frac,
-        'stage3_frac': args. stage3_frac,
+        'stage3_frac': args.stage3_frac,
         'train_low': os.path.join(args.data_root, 'train_data'),
-        'train_gt':  os.path.join(args. data_root, 'train_gt'),
+        'train_gt': os.path.join(args.data_root, 'train_gt'),
     }
 
     # Initialize model
@@ -681,36 +703,36 @@ def main():
     )
 
     # Initialize color preservation
-    if hasattr(model, 'colour_head') and hasattr(model. colour_head, 'weight'):
+    if hasattr(model, 'colour_head') and hasattr(model.colour_head, 'weight'):
         with torch.no_grad():
             color_matrix = torch.tensor([
                 [1.1, 0.0, 0.0], [0.0, 1.1, 0.0], [0.0, 0.0, 1.1]
             ]).view(3, 3, 1, 1)
-            model.colour_head.weight.data. copy_(color_matrix)
+            model.colour_head.weight.data.copy_(color_matrix)
 
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p. numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model:  {total_params:,} total parameters ({trainable_params:,} trainable)")
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model: {total_params:,} total parameters ({trainable_params:,} trainable)")
 
     # Create datasets
     try:
         train_dataset, val_dataset = create_datasets(config)
 
         train_loader = DataLoader(
-            train_dataset, 
+            train_dataset,
             batch_size=config['batch_size'],
-            shuffle=True, 
+            shuffle=True,
             num_workers=args.num_workers,
-            drop_last=True, 
+            drop_last=True,
             pin_memory=(device == 'cuda')
         )
 
         val_loader = DataLoader(
-            val_dataset, 
+            val_dataset,
             batch_size=config['batch_size'],
-            shuffle=False, 
-            num_workers=args.num_workers, 
+            shuffle=False,
+            num_workers=args.num_workers,
             pin_memory=(device == 'cuda')
         )
 
@@ -722,12 +744,12 @@ def main():
     try:
         trainer = MinimalTrainer(model, device, config, resume_ckpt=args.resume)
         trainer.train(train_loader, val_loader, args.num_epochs)
-        
+
         # Save final checkpoint
         trainer.save_checkpoint('final_model.pth')
         print(f"\n✅ Training completed successfully!")
         print(f"📁 Checkpoints saved to: {experiment_dir}/checkpoints/")
-        
+
         return 0
 
     except Exception as e:
