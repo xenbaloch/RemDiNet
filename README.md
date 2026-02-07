@@ -7,7 +7,7 @@
 RemDiNet is a PyTorch implementation for low-light image enhancement that leverages semantic information and SNR (signal-to-noise ratio) guidance for robust, color-preserving improvements, even with limited paired data. 
 
 > **Paper (In Submission)**: *Remove the Distraction: Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
-> **Code**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
+> **Code & Data**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
 
 ## 🔧 Installation
 
