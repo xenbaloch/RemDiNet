@@ -154,10 +154,10 @@ class ImprovedLowLightDataset(Dataset):
             gt_cropped = TF.rotate(gt_cropped, angle, interpolation=interp, fill=0)
 
         # 4. Stronger color/exposure jitter (INPUT ONLY)
-        brightness_factor = random.uniform(0.75, 1.25)
-        contrast_factor = random.uniform(0.75, 1.25)
-        saturation_factor = random.uniform(0.75, 1.25)
-        hue_factor = random.uniform(-0.05, 0.05)
+        brightness_factor = random.uniform(0.90, 1.10)    
+        contrast_factor = random.uniform(0.90, 1.10)     
+        saturation_factor = random.uniform(0.90, 1.10)    
+        hue_factor = random.uniform(-0.03, 0.03)          
 
         # Apply jitter to INPUT only; keep GT photometrically clean
         for fn, fac in [
@@ -174,8 +174,8 @@ class ImprovedLowLightDataset(Dataset):
         gt_tensor = TF.to_tensor(gt_cropped) if gt_cropped else None
 
         # Optional gamma/exposure augmentation (INPUT ONLY)
-        if self.augment and self.mode == 'train' and random.random() < 0.6:
-            gamma = random.uniform(0.6, 1.6)
+        if self.augment and self.mode == 'train' and random.random() < 0.4:
+            gamma = random.uniform(0.85, 1.20)
             low_tensor = low_tensor.pow(gamma)
 
         # Optional color temperature shift (white-balance variation)
@@ -188,8 +188,8 @@ class ImprovedLowLightDataset(Dataset):
             low_tensor = (low_tensor * rgb_gain).clamp(0, 1)
 
         # Optional Poisson–Gaussian noise (INPUT ONLY) – **zero‑mean** shot noise
-        if self.augment and self.mode == 'train' and random.random() < 0.4:
-            sigma = random.uniform(0.0, 0.02)
+        if self.augment and self.mode == 'train' and random.random() < 0.2:
+            sigma = random.uniform(0.0, 0.01)
             Q = 255.0
             # shot noise: sample counts then subtract expectation → zero mean
             counts = torch.poisson((low_tensor * Q).clamp(0, Q))
@@ -370,4 +370,5 @@ class UnifiedDataLoader:
 
 
 # Keep backward compatibility
+
 TrainingConfig = UnifiedTrainingConfig
