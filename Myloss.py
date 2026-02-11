@@ -30,27 +30,27 @@ except ImportError:
 
 
 def color_diversity_loss(enhanced_rgb):
-    """Stronger color diversity enforcement to prevent grayscale outputs"""
+    """Color diversity loss — always returns a differentiable value."""
+    # Channel-wise statistics
     r, g, b = enhanced_rgb[:, 0], enhanced_rgb[:, 1], enhanced_rgb[:, 2]
 
-    # Calculate saturation
-    max_rgb = torch.max(enhanced_rgb, dim=1)[0]
-    min_rgb = torch.min(enhanced_rgb, dim=1)[0]
-    saturation = (max_rgb - min_rgb) / (max_rgb + 1e-8)
-    avg_saturation = saturation.mean()
+    # Pairwise channel differences (want these to be non-zero)
+    rg_diff = (r - g).abs().mean()
+    rb_diff = (r - b).abs().mean()
+    gb_diff = (g - b).abs().mean()
+    avg_diversity = (rg_diff + rb_diff + gb_diff) / 3.0
 
-    # Penalty for low saturation
-    target_saturation = COLOR_THRESHOLDS['target_saturation']
-    if avg_saturation < target_saturation:
-        penalty = ((target_saturation - avg_saturation) / target_saturation) ** 2
-        return penalty
+    # Saturation measure
+    max_rgb = enhanced_rgb.max(dim=1)[0]
+    min_rgb = enhanced_rgb.min(dim=1)[0]
+    saturation = ((max_rgb - min_rgb) / (max_rgb + 1e-8)).mean()
 
-    # Penalize if RGB channels are too similar
-    channel_variance = torch.var(enhanced_rgb, dim=1).mean()
-    if channel_variance < 0.01:
-        return torch.tensor(0.5, device=enhanced_rgb.device)
+    # Target: we want diversity > 0.02 and saturation > 0.10
+    # Loss is HIGH when diversity/saturation are LOW — always differentiable
+    diversity_loss = torch.exp(-15.0 * avg_diversity)   # ≈1 when gray, ≈0 when colorful
+    saturation_loss = torch.exp(-10.0 * saturation)     # ≈1 when gray, ≈0 when saturated
 
-    return torch.tensor(0.0, device=enhanced_rgb.device)
+    return 0.5 * diversity_loss + 0.5 * saturation_loss
 
 
 class SimplifiedDistractionAwareLoss(nn.Module):

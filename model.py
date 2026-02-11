@@ -215,15 +215,6 @@ class TransformerDecoder(nn.Module):
             rgb_residual = self.rgb_residual_head(upsampled) * 0.1
             enhanced = color_preserved + rgb_residual
 
-            # Color saturation check
-            max_c = enhanced.max(dim=1, keepdim=True)[0]
-            min_c = enhanced.min(dim=1, keepdim=True)[0]
-            saturation = (max_c - min_c).mean()
-
-            if saturation < 0.1:
-                color_diff = original_input - orig_lum
-                enhanced = enhanced_lum + color_diff * 1.5
-
             return torch.clamp(enhanced, 0, 1)
 
         except Exception as e:
@@ -237,12 +228,13 @@ class TransformerDecoder(nn.Module):
 class GlobalColourAffine(nn.Module):
     """Enhanced color correction with gradient-preserving weight management"""
 
-    def __init__(self, enable_vibrance: bool = False):
+    def __init__(self, enable_vibrance: bool = False, identity_clamp: float = 0.15):
         super().__init__()
         # Initialize to identity (neutral) instead of 1.1x boost
         init_matrix = torch.eye(3).view(3, 3, 1, 1)
         self.weight = nn.Parameter(init_matrix)
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
+        self.identity_clamp = identity_clamp
 
         self.enable_vibrance = enable_vibrance
         if enable_vibrance:
@@ -258,8 +250,11 @@ class GlobalColourAffine(nn.Module):
         def clamp_weights_hook(module, input):
             # This runs before forward pass, but after optimizer updates
             with torch.no_grad():
-                # Tightened: near-identity clamps to prevent strong color shifts
-                self.weight.data.clamp_(0.95, 1.05)
+                # Per-element identity-relative clamping
+                eye = torch.eye(3, device=self.weight.device).view(3, 3, 1, 1)
+                low = eye - self.identity_clamp
+                high = eye + self.identity_clamp
+                self.weight.data = torch.clamp(self.weight.data, min=low, max=high)
                 self.bias.data.clamp_(-0.02, 0.02)
 
                 if self.enable_vibrance:
@@ -270,17 +265,6 @@ class GlobalColourAffine(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # NO weight clamping here - gradients are preserved!
-        
-        # Optional: simple gray-world white balance
-        if self.training:  # Only during training to avoid test-time shifts
-            channel_means = x.mean(dim=[2, 3], keepdim=True)
-            overall_mean = channel_means.mean()
-            if overall_mean > 0:
-                balance_factors = overall_mean / (channel_means + 1e-8)
-                # Apply mild correction (max 5% adjustment)
-                balance_factors = torch.clamp(balance_factors, 0.95, 1.05)
-                x = x * balance_factors
-                x = torch.clamp(x, 0.0, 1.0)
         
         w = self.weight.expand(-1, -1, *x.shape[2:])
         y = torch.einsum('bchw,ichw->bihw', x, w) + self.bias
@@ -634,29 +618,32 @@ class ImprovedCurveEstimator(nn.Module):
             self.curve_net[-2].bias.data.fill_(0.0)
 
     def enhance_image(self, x: torch.Tensor, curves: torch.Tensor) -> torch.Tensor:
-        batch_size, channels, height, width = x.shape
-        # RESTORED: Put base_scale back to 0.25 from 0.15
+        # Extract RGB channels (first 3 channels)
+        rgb = x[:, :3]
+        batch_size, channels, height, width = rgb.shape
+        
         base_scale = 0.25
 
         # Adaptive scaling per channel
-        channel_brightness = x.mean(dim=[2, 3], keepdim=True)
+        channel_brightness = rgb.mean(dim=[2, 3], keepdim=True)
         channel_factors = torch.clamp(0.8 - channel_brightness, 0.1, 0.6)
         adaptive_scale = base_scale * channel_factors
 
         curves_reshaped = curves.view(batch_size, self.num_iterations, 3, height, width)
         curves_reshaped = curves_reshaped * adaptive_scale.unsqueeze(1)
 
-        enhanced = x
+        enhanced = rgb
         for i in range(self.num_iterations):
-            # RESTORED: Put delta scaling back to 0.35 from 0.25
-            delta = curves_reshaped[:, i, :, :, :] * (1.0 - enhanced) * 0.35
+            # Standard Zero-DCE formula
+            alpha = curves_reshaped[:, i, :, :, :]
+            delta = alpha * enhanced * (1.0 - enhanced)
             enhanced = enhanced + delta
             enhanced = torch.clamp(enhanced, 0, 1.0)
 
         # Color preservation check
-        color_loss = self._check_color_loss(x, enhanced)
+        color_loss = self._check_color_loss(rgb, enhanced)
         if color_loss > 0.3:
-            enhanced = 0.7 * enhanced + 0.3 * x * (enhanced.mean() / (x.mean() + 1e-8))
+            enhanced = 0.7 * enhanced + 0.3 * rgb * (enhanced.mean() / (rgb.mean() + 1e-8))
             enhanced = torch.clamp(enhanced, 0, 1.0)
 
         return enhanced, curves_reshaped
@@ -667,6 +654,8 @@ class ImprovedCurveEstimator(nn.Module):
         return torch.clamp((orig_sat - enh_sat) / (orig_sat + 1e-8), 0, 1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Extract RGB channels (first 3 channels) for curve estimation
+        rgb = x[:, :3]
         raw_curves = self.curve_net(x)
         enhanced, processed_curves = self.enhance_image(x, raw_curves)
         return enhanced, raw_curves
@@ -860,12 +849,14 @@ class UnifiedLowLightEnhancer(nn.Module):
         # Crop back to original size
         final = final[..., :H0, :W0]
 
-        # Final color boost if needed
+        # Differentiable final color boost if needed
         final_saturation = (final.max(dim=1)[0] - final.min(dim=1)[0]).mean()
-        if final_saturation < 0.2:
+        boost_factor = torch.clamp(2.0 * torch.relu(0.15 - final_saturation) / 0.15, 0.0, 1.0)
+        if boost_factor > 0.01:
             luminance = 0.299 * final[:, 0:1] + 0.587 * final[:, 1:2] + 0.114 * final[:, 2:3]
             color_diff = final - luminance
-            final = luminance + color_diff * 2.0
+            scale = 1.0 + boost_factor * 1.0
+            final = luminance + color_diff * scale
             final = torch.clamp(final, 0.0, 1.0)
 
         return {

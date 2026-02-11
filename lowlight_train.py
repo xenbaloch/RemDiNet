@@ -59,6 +59,7 @@ class MinimalTrainer:
         self.best_psnr_s1 = 0.0
         self.best_psnr_s2 = 0.0
         self.best_score_s3 = float('-inf')
+        self._mask_unfrozen = False
 
         # Gradient accumulation factor
         self.grad_accum = config.get('grad_accum', 1)
@@ -105,7 +106,7 @@ class MinimalTrainer:
         self.optimizer = AdamW([
             {'params': curve_params, 'lr': 1e-4, 'name': 'curve'},
             {'params': mask_params, 'lr': 1e-4, 'name': 'mask'},
-            {'params': other_params, 'lr': 1e-5, 'name': 'other'},
+            {'params': other_params, 'lr': 2e-5, 'name': 'other'},
         ], weight_decay=3e-4)
 
         # FIXED: Removed 'verbose' parameter
@@ -169,6 +170,7 @@ class MinimalTrainer:
             self.stage = new_stage
             self.stage_switch_epoch = self.epoch
             self.loss_mix = 0.0
+            self._mask_unfrozen = False
 
             # Reset early stopping
             self.patience_count = 0
@@ -219,15 +221,6 @@ class MinimalTrainer:
             else:
                 return mixed_loss
 
-        if epochs_since_switch == 15 and self.stage == 2:
-            for p in self.model.mask_predictor.parameters():
-                p.requires_grad_(True)
-
-            # Slow the mask learning rate
-            for g in self.optimizer.param_groups:
-                if g.get('name') == 'mask':
-                    g['lr'] *= 0.10
-
         if self.stage == 3 and epochs_since_switch < 5 and self.old_criterion is not None:
             self.loss_mix = epochs_since_switch / 5.0
             old_loss_out = self.old_criterion(results, target, input_img, self.epoch)
@@ -263,6 +256,18 @@ class MinimalTrainer:
             for k, v in colour_w.items():
                 if hasattr(self.criterion, k):
                     setattr(self.criterion, k, v)
+            
+            # Mask unfreeze logic - one-shot at epoch 15 since stage switch
+            if epoch_in_stage == 15 and not self._mask_unfrozen:
+                for p in self.model.mask_predictor.parameters():
+                    p.requires_grad_(True)
+                
+                # Set absolute mask learning rate
+                for g in self.optimizer.param_groups:
+                    if g.get('name') == 'mask':
+                        g['lr'] = 2e-5
+                
+                self._mask_unfrozen = True
         elif self.stage == 3:
             warm = max(1, int(min(5, self.stage_transitions[1] - self.stage_switch_epoch)))
             perc = min(1.0, epoch_in_stage / warm)
@@ -309,7 +314,7 @@ class MinimalTrainer:
 
                 # Step only every grad_accum batches
                 if (i + 1) % self.grad_accum == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 
@@ -334,7 +339,7 @@ class MinimalTrainer:
         # Step once more if there is a remainder micro-batch
         total_batches = valid_batches
         if total_batches % self.grad_accum != 0:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
             self.optimizer.step()
             self.optimizer.zero_grad()
 
@@ -354,6 +359,7 @@ class MinimalTrainer:
         total_ssim = 0.0
         total_sat = 0.0
         count = 0
+        skip_count = 0
 
         with torch.no_grad():
             for low_light, ground_truth in val_loader:
@@ -378,12 +384,18 @@ class MinimalTrainer:
                     ssim = calculate_ms_ssim(enhanced, ground_truth, normalized=False)
                     saturation = self.calculate_saturation(enhanced)
 
+                    # NaN/Inf guard
+                    if not torch.isfinite(psnr) or not torch.isfinite(ssim):
+                        skip_count += 1
+                        continue
+
                     total_psnr += psnr.item()
                     total_ssim += ssim.item()
                     total_sat += saturation
                     count += 1
 
                 except Exception:
+                    skip_count += 1
                     continue
 
         if count == 0:
@@ -666,7 +678,7 @@ def main():
     print(f"  Batch size: {args.batch_size}")
     print(f"  Epochs: {args.num_epochs}")
     print(f"  Image size: {args.image_size}×{args.image_size}")
-    print(f"  Learning rates: curve/mask=1e-4, other=1e-5")
+    print(f"  Learning rates: curve/mask=1e-4, other=2e-5")
     print(f"  Weight decay: 3e-4")
     print(f"  GT pairing: {args.gt_pairing}")
     print(f"Model features:")
@@ -701,14 +713,6 @@ def main():
         use_learnable_snr=args.use_learnable_snr,
         use_contrast_refinement=args.use_contrast_refinement
     )
-
-    # Initialize color preservation
-    if hasattr(model, 'colour_head') and hasattr(model.colour_head, 'weight'):
-        with torch.no_grad():
-            color_matrix = torch.tensor([
-                [1.1, 0.0, 0.0], [0.0, 1.1, 0.0], [0.0, 0.0, 1.1]
-            ]).view(3, 3, 1, 1)
-            model.colour_head.weight.data.copy_(color_matrix)
 
     model = model.to(device)
     total_params = sum(p.numel() for p in model.parameters())
