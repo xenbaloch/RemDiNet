@@ -31,6 +31,10 @@ except ImportError:
 
 def color_diversity_loss(enhanced_rgb):
     """Color diversity loss — always returns a differentiable value."""
+    # Penalty scales for exponential functions
+    DIVERSITY_PENALTY_SCALE = 15.0  # Higher = steeper penalty for low diversity
+    SATURATION_PENALTY_SCALE = 10.0  # Higher = steeper penalty for low saturation
+    
     # Channel-wise statistics
     r, g, b = enhanced_rgb[:, 0], enhanced_rgb[:, 1], enhanced_rgb[:, 2]
 
@@ -47,8 +51,8 @@ def color_diversity_loss(enhanced_rgb):
 
     # Target: we want diversity > 0.02 and saturation > 0.10
     # Loss is HIGH when diversity/saturation are LOW — always differentiable
-    diversity_loss = torch.exp(-15.0 * avg_diversity)   # ≈1 when gray, ≈0 when colorful
-    saturation_loss = torch.exp(-10.0 * saturation)     # ≈1 when gray, ≈0 when saturated
+    diversity_loss = torch.exp(-DIVERSITY_PENALTY_SCALE * avg_diversity)   # ≈1 when gray, ≈0 when colorful
+    saturation_loss = torch.exp(-SATURATION_PENALTY_SCALE * saturation)     # ≈1 when gray, ≈0 when saturated
 
     return 0.5 * diversity_loss + 0.5 * saturation_loss
 

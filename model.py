@@ -850,12 +850,20 @@ class UnifiedLowLightEnhancer(nn.Module):
         final = final[..., :H0, :W0]
 
         # Differentiable final color boost if needed
+        MIN_SATURATION_THRESHOLD = 0.15
+        MAX_BOOST_SCALE = 2.0
+        MIN_BOOST_THRESHOLD = 0.01
+        ADDITIONAL_BOOST = 1.0
+        
         final_saturation = (final.max(dim=1)[0] - final.min(dim=1)[0]).mean()
-        boost_factor = torch.clamp(2.0 * torch.relu(0.15 - final_saturation) / 0.15, 0.0, 1.0)
-        if boost_factor > 0.01:
+        boost_factor = torch.clamp(
+            MAX_BOOST_SCALE * torch.relu(MIN_SATURATION_THRESHOLD - final_saturation) / MIN_SATURATION_THRESHOLD,
+            0.0, 1.0
+        )
+        if boost_factor > MIN_BOOST_THRESHOLD:
             luminance = 0.299 * final[:, 0:1] + 0.587 * final[:, 1:2] + 0.114 * final[:, 2:3]
             color_diff = final - luminance
-            scale = 1.0 + boost_factor * 1.0
+            scale = 1.0 + boost_factor * ADDITIONAL_BOOST
             final = luminance + color_diff * scale
             final = torch.clamp(final, 0.0, 1.0)
 

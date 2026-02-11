@@ -5,6 +5,9 @@ Test script to validate the critical bug fixes
 import torch
 import sys
 
+# Test constants
+FLOAT_TOLERANCE = 0.01
+
 def test_color_diversity_loss():
     """Test Fix #1: color_diversity_loss is fully differentiable"""
     print("Testing Fix #1: color_diversity_loss differentiability...")
@@ -134,7 +137,7 @@ def test_color_enhancement_clamps():
     enhancer = EnhancedGlobalColorCorrection()
     
     # Check initial vibrance_factor value
-    assert abs(enhancer.vibrance_factor.item() - 1.2) < 0.01, "vibrance_factor should initialize to 1.2"
+    assert abs(enhancer.vibrance_factor.item() - 1.2) < FLOAT_TOLERANCE, "vibrance_factor should initialize to 1.2"
     
     # Test forward pass
     x = torch.rand(2, 3, 32, 32)
