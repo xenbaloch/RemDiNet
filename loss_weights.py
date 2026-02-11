@@ -1,7 +1,7 @@
 import math
 
 # -----------------------------------------------------------------------------
-#  Generic (stage‑independent) base weights – seldom touched during training
+#  Generic (stage-independent) base weights – seldom touched during training
 # -----------------------------------------------------------------------------
 LOSS_WEIGHTS = {
     "w_reconstruction": 0.80,
@@ -16,10 +16,10 @@ LOSS_WEIGHTS = {
 }
 
 # -----------------------------------------------------------------------------
-#  Stage‑specific overrides (copied & blended inside the trainer)
+#  Stage-specific overrides (copied & blended inside the trainer)
 # -----------------------------------------------------------------------------
 STAGE_WEIGHTS = {
-    # Stage‑1  – reconstruction warm‑up (colour kept modest)
+    # Stage-1: reconstruction with mild SSIM emphasis
     1: {
         "w_reconstruction": 1.20,
         "w_color_consistency": 0.20,
@@ -30,7 +30,7 @@ STAGE_WEIGHTS = {
         "w_perceptual":        0.00,
         "w_mask_mean":         0.00,
     },
-    # Stage‑2  – structure + colour (after switch at epoch~15)
+    # Stage-2: balance structure and color
     2: {
         "w_reconstruction":    1.35,
         "w_exposure":          0.07,
@@ -41,7 +41,7 @@ STAGE_WEIGHTS = {
         "w_mask_mean":         0.03,
         "w_perceptual":        0.00,
     },
-    # Stage‑3  – perceptual fine‑tune
+    # Stage-3: perceptual refinement
     3: {
         "w_reconstruction":    0.90,
         "w_exposure":          0.04,
@@ -55,7 +55,7 @@ STAGE_WEIGHTS = {
 }
 
 # -----------------------------------------------------------------------------
-#  Early‑stopping rules (per stage)
+#  Early-stopping rules (per stage)
 # -----------------------------------------------------------------------------
 EARLY_STOPPING_CONFIG = {
     "stage_1": {"patience": 30, "min_delta": 0.10},
@@ -64,25 +64,25 @@ EARLY_STOPPING_CONFIG = {
 }
 
 # -----------------------------------------------------------------------------
-#  Colour‑preservation thresholds used by validation hooks
+#  Colour-preservation thresholds used by validation hooks
 # -----------------------------------------------------------------------------
 COLOR_THRESHOLDS = {
-    "min_saturation": 0.10,   # match real val‑set stats
+    "min_saturation": 0.10,
     "critical_saturation": 0.04,
     "target_saturation":   0.30,
-    "saturation_penalty_factor": 1.0,  # softer penalty → PSNR not masked
+    "saturation_penalty_factor": 1.0,
 }
 
 # -----------------------------------------------------------------------------
-#  Optim‑level defaults (unchanged)
+#  Optim-level defaults (unchanged)
 # -----------------------------------------------------------------------------
 TRAINING_DEFAULTS = {
     "learning_rate":              5e-4,
     "learning_rate_curves_multiplier": 2.0,
     "weight_decay":               1e-4,
     "gradient_clip_norm":         0.5,
-    "batch_size":                 8,
-    "image_size":                 512,
+    "batch_size":                 4,
+    "image_size":                 320,
     "num_epochs":                 60,
     "val_split":                  0.2,
 }
@@ -99,30 +99,26 @@ def get_stage_weights(stage: int) -> dict:
 
 
 def get_early_stopping_config(stage: int) -> dict:
-    """Early‑stopping parameters for the given stage (copy)."""
+    """Early-stopping parameters for the given stage (copy)."""
     return EARLY_STOPPING_CONFIG[f"stage_{stage}"].copy()
 
 
-# ----  Cosine ramp‑in for colour weights  -----------------------------------
+# ----  Cosine ramp-in for colour weights  -----------------------------------
 
 def ramp_colour(weights: dict, epoch_in_stage: int, warmup_epochs: int = 20) -> dict:
-    """Cosine‑ramp colour‑related weights during the first *warmup_epochs*
-    after a stage switch – prevents sudden PSNR dip when colour terms appear."""
     if epoch_in_stage >= warmup_epochs:
-        return weights  # nothing to do
-
+        return weights
     out = weights.copy()
     ramp = 0.5 * (1 - math.cos(math.pi * epoch_in_stage / warmup_epochs))
 
+    # Ramp auxiliary losses; keep reconstruction + SSIM at full strength
     RAMP_KEYS = (
         "w_color_consistency", "w_color_diversity", "w_exposure", "w_edge",
     )
-
     for k in RAMP_KEYS:
         if k in out:
             out[k] *= ramp
     return out
-
 
 def get_adaptive_color_weights(current_saturation: float, base_weights: dict | None = None) -> dict:
     """Optional dynamic tweak based on current image saturation."""
