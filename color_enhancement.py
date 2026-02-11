@@ -14,7 +14,7 @@ class EnhancedGlobalColorCorrection(nn.Module):
         self.weight = nn.Parameter(torch.eye(3).view(3, 3, 1, 1))
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
 
-        # Learnable vibrance/saturation control (start at 1.2 instead of 1.0)
+        # Learnable vibrance/saturation control
         self.vibrance_factor = nn.Parameter(torch.tensor(1.2))
 
         # Per-channel gamma correction (start at 1.0 = neutral)
