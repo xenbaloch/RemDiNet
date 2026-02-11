@@ -226,52 +226,41 @@ class TransformerDecoder(nn.Module):
 
 
 class GlobalColourAffine(nn.Module):
-    """Enhanced color correction with gradient-preserving weight management"""
+    """Safer color correction with identity bias (prevents sepia/green wash)"""
 
     def __init__(self, enable_vibrance: bool = False, identity_clamp: float = 0.15):
         super().__init__()
-        # Initialize to identity (neutral) instead of 1.1x boost
+        # Start from identity (no cross-channel mixing)
         init_matrix = torch.eye(3).view(3, 3, 1, 1)
-        self.weight = nn.Parameter(init_matrix)
+        self.weight = nn.Parameter(init_matrix.clone())
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
-        self.identity_clamp = identity_clamp
 
         self.enable_vibrance = enable_vibrance
         if enable_vibrance:
-            # Start at 1.0 (neutral) instead of 1.3
-            self.vibrance_factor = nn.Parameter(torch.tensor(1.0))
+            self.vibrance_factor = nn.Parameter(torch.tensor(1.05))
 
-        # Register a post-optimization hook to clamp weights
+        self.identity_clamp = float(identity_clamp)
         self._register_weight_clamping()
 
     def _register_weight_clamping(self):
-        """Register hooks to clamp weights after optimizer steps, not during forward pass"""
-
+        """Keep weights near-identity to avoid color casts"""
         def clamp_weights_hook(module, input):
-            # This runs before forward pass, but after optimizer updates
             with torch.no_grad():
-                # Per-element identity-relative clamping
                 eye = torch.eye(3, device=self.weight.device).view(3, 3, 1, 1)
                 low = eye - self.identity_clamp
                 high = eye + self.identity_clamp
                 self.weight.data = torch.clamp(self.weight.data, min=low, max=high)
                 self.bias.data.clamp_(-0.02, 0.02)
-
                 if self.enable_vibrance:
-                    # Tightened: max 10% vibrance boost instead of 25%
-                    self.vibrance_factor.data.clamp_(1.0, 1.1)
-
+                    self.vibrance_factor.data.clamp_(1.0, 1.15)
         self.register_forward_pre_hook(clamp_weights_hook)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # NO weight clamping here - gradients are preserved!
-        
+
         w = self.weight.expand(-1, -1, *x.shape[2:])
         y = torch.einsum('bchw,ichw->bihw', x, w) + self.bias
 
-        if self.enable_vibrance and not torch.isclose(
-                self.vibrance_factor, torch.tensor(1.0, device=self.vibrance_factor.device)
-        ):
+        if self.enable_vibrance:
             y = self._apply_vibrance(y, self.vibrance_factor)
 
         return torch.clamp(y, 0.0, 1.0)
@@ -282,7 +271,7 @@ class GlobalColourAffine(nn.Module):
         maxc = x.max(1, keepdim=True)[0]
         minc = x.min(1, keepdim=True)[0]
         sat = (maxc - minc) / (maxc + 1e-8)
-        boost = 1.0 + (factor - 1.0) * (1.0 - sat) * 2.0
+        boost = 1.0 + (factor - 1.0) * (1.0 - sat) * 2.5
         return lum + (x - lum) * boost
 
 
@@ -369,12 +358,8 @@ class MaskPredictor(nn.Module):
             mask = self.net(inp)
 
             if self.training and self.enable_dither:
-                noise = torch.randn_like(mask) * 0.03
+                noise = torch.randn_like(mask) * 0.015
                 mask = torch.clamp(mask + noise, 0.0, 1.0)
-
-            # Apply sharpening when mask is trained (gamma > 1 sharpens the sigmoid)
-            if not self.training or self.forward_calls > 1000:  # After some training
-                mask = mask.pow(2.0)  # Sharpen the mask
 
             self.forward_calls += 1
             return mask
@@ -464,7 +449,6 @@ class MobileNetV3LargeBackbone(nn.Module):
             mobilenet = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained else None)
             self.features = mobilenet.features
         except Exception:
-            # Fallback dummy features
             self.features = nn.Sequential(
                 nn.Conv2d(3, 16, 3, 1, 1),
                 nn.ReLU(inplace=True),
@@ -499,7 +483,6 @@ class MobileNetV3LargeBackbone(nn.Module):
                 features['scale_16'] = x
 
         except Exception:
-            # Create dummy features
             B, _, H, W = x.shape
             for scale, dim in self.feature_dims.items():
                 scale_num = int(scale.split('_')[1])
@@ -531,7 +514,6 @@ class MobileNetSemanticGuidance(nn.Module):
         self.backbone = MobileNetV3LargeBackbone(pretrained=True)
         self.semantic_head = MobileNetSemanticHead(num_classes)
 
-        # Selectively unfreeze later layers
         try:
             for i, layer in enumerate(self.backbone.features):
                 if i >= 10:
@@ -561,7 +543,6 @@ class MobileNetSemanticGuidance(nn.Module):
             semantic_logits = self.semantic_head(backbone_features['scale_16'])
             semantic_probs = F.softmax(semantic_logits, dim=1)
         except Exception:
-            # Create dummy features
             backbone_features = {
                 'scale_1': torch.zeros(batch, 16, H // 2, W // 2, device=x.device),
                 'scale_2': torch.zeros(batch, 24, H // 4, W // 4, device=x.device),
@@ -599,12 +580,13 @@ class MobileNetSemanticGuidance(nn.Module):
 
 
 class ImprovedCurveEstimator(nn.Module):
-    """Color-aware curve estimation with restored power"""
+    """Color-aware curve estimation — FIX #1: properly handles 4-ch input"""
 
     def __init__(self, num_iterations: int = 8):
         super().__init__()
         self.num_iterations = num_iterations
 
+        # NOTE: Input is 4-ch (RGB + SNR), output is num_iterations * 3 curve maps
         self.curve_net = nn.Sequential(
             nn.Conv2d(4, 32, 3, 1, 1), nn.ReLU(inplace=True),
             nn.Conv2d(32, 32, 3, 1, 1), nn.ReLU(inplace=True),
@@ -612,21 +594,18 @@ class ImprovedCurveEstimator(nn.Module):
             nn.Conv2d(16, num_iterations * 3, 3, 1, 1), nn.Tanh()
         )
 
-        # Initialize for better color preservation
         with torch.no_grad():
             self.curve_net[-2].weight.data *= 0.02
             self.curve_net[-2].bias.data.fill_(0.0)
 
-    def enhance_image(self, x: torch.Tensor, curves: torch.Tensor) -> torch.Tensor:
-        # Extract RGB channels (first 3 channels)
-        rgb = x[:, :3]
-        batch_size, channels, height, width = rgb.shape
-        
+    def enhance_image(self, rgb: torch.Tensor, curves: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Apply curves to 3-ch RGB with adaptive brightness-aware scaling."""
+        batch_size, _, height, width = rgb.shape
         base_scale = 0.25
 
-        # Adaptive scaling per channel
+        # Adaptive: darker channels get stronger boost
         channel_brightness = rgb.mean(dim=[2, 3], keepdim=True)
-        channel_factors = torch.clamp(0.8 - channel_brightness, 0.1, 0.6)
+        channel_factors = torch.clamp(0.7 - channel_brightness, 0.05, 0.5)
         adaptive_scale = base_scale * channel_factors
 
         curves_reshaped = curves.view(batch_size, self.num_iterations, 3, height, width)
@@ -634,17 +613,9 @@ class ImprovedCurveEstimator(nn.Module):
 
         enhanced = rgb
         for i in range(self.num_iterations):
-            # Standard Zero-DCE formula
-            alpha = curves_reshaped[:, i, :, :, :]
-            delta = alpha * enhanced * (1.0 - enhanced)
+            delta = curves_reshaped[:, i, :, :, :] * (1.0 - enhanced) * 0.30
             enhanced = enhanced + delta
-            enhanced = torch.clamp(enhanced, 0, 1.0)
-
-        # Color preservation check
-        color_loss = self._check_color_loss(rgb, enhanced)
-        if color_loss > 0.3:
-            enhanced = 0.7 * enhanced + 0.3 * rgb * (enhanced.mean() / (rgb.mean() + 1e-8))
-            enhanced = torch.clamp(enhanced, 0, 1.0)
+            enhanced = torch.clamp(enhanced, 0.0, 1.0)
 
         return enhanced, curves_reshaped
 
@@ -654,10 +625,10 @@ class ImprovedCurveEstimator(nn.Module):
         return torch.clamp((orig_sat - enh_sat) / (orig_sat + 1e-8), 0, 1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Extract RGB channels (first 3 channels) for curve estimation
-        rgb = x[:, :3]
-        raw_curves = self.curve_net(x)
-        enhanced, processed_curves = self.enhance_image(x, raw_curves)
+        """Predict curves from 4-ch input, apply to 3-ch RGB only."""
+        raw_curves = self.curve_net(x)       # predict from [B, 4, H, W]
+        rgb = x[:, :3]                       # extract RGB only
+        enhanced, processed_curves = self.enhance_image(rgb, raw_curves)
         return enhanced, raw_curves
 
 
@@ -703,9 +674,7 @@ class UnifiedLowLightEnhancer(nn.Module):
             use_learnable_snr: bool = False,
             use_task_saliency: bool = False,
             use_contrast_refinement: bool = False,
-            snr_tiny_mode: bool = False,
-            disable_color_affine: bool = False,
-            disable_color_enhancer: bool = False
+            snr_tiny_mode: bool = False
     ):
         super().__init__()
 
@@ -716,17 +685,19 @@ class UnifiedLowLightEnhancer(nn.Module):
         self.use_learnable_snr = use_learnable_snr
         self.use_task_saliency = use_task_saliency
         self.use_contrast_refinement = use_contrast_refinement
-        self.disable_color_affine = disable_color_affine
-        self.disable_color_enhancer = disable_color_enhancer
 
-        # Color enhancement components (vibrance off by default)
-        self.colour_head = GlobalColourAffine(enable_vibrance=False)
+        # Color enhancement components (safer defaults)
+        self.colour_head = GlobalColourAffine(enable_vibrance=False, identity_clamp=0.15)
         try:
             self.color_enhancer = EnhancedGlobalColorCorrection()
         except Exception:
             self.color_enhancer = None
 
-        self.skip_mask = False  # For stage-specific training
+        # Runtime toggles (can be set externally)
+        self.disable_color_affine = False
+        self.disable_color_enhancer = False
+
+        self.skip_mask = False
 
         # Optional components
         if self.use_learnable_snr:
@@ -756,7 +727,6 @@ class UnifiedLowLightEnhancer(nn.Module):
             self.contrast_refiner = ContrastRefinementBlock()
 
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        # Denormalize and pad
         x_denorm = denormalize_imagenet(x)
         B, C, H0, W0 = x_denorm.shape
         pad_h = (32 - (H0 % 32)) % 32
@@ -779,7 +749,7 @@ class UnifiedLowLightEnhancer(nn.Module):
             except Exception:
                 pass
 
-        # ---- Fuse SNR-map and distraction-mask into one guidance map ----
+        # Fuse SNR-map and distraction-mask into one guidance map
         guidance = torch.clamp(snr_map + distraction_mask, 0.0, 1.0)
 
         # Semantic guidance
@@ -806,7 +776,7 @@ class UnifiedLowLightEnhancer(nn.Module):
 
         # Curve enhancement
         try:
-            x_ce_input = torch.cat([x_denorm, snr_map], dim=1)
+            x_ce_input = torch.cat([x_denorm, snr_map], dim=1)  # [B, 4, H, W]
             curve_enhanced, curves = self.curve_estimator(x_ce_input)
             if curve_enhanced.mean() > 0.85:
                 curve_enhanced = x_denorm + (curve_enhanced - x_denorm) * 0.8
@@ -814,13 +784,11 @@ class UnifiedLowLightEnhancer(nn.Module):
             curve_enhanced = x_denorm
             curves = torch.zeros(B, self.num_iterations * 3, H, W, device=x.device)
 
-        # Build semantic mask
         if isinstance(semantic_features, dict) and 'probs' in semantic_features:
             sem_map = semantic_features['probs'].max(dim=1, keepdim=True)[0]
         else:
             sem_map = torch.zeros(B, 1, H, W, device=x.device)
 
-        # Blending
         if getattr(self, 'skip_mask', False):
             mask = torch.ones_like(snr_map) * 0.5
         else:
@@ -831,44 +799,35 @@ class UnifiedLowLightEnhancer(nn.Module):
 
         if getattr(self, "use_curve_only", False):
             final = curve_enhanced
-            mask = torch.ones_like(snr_map)  # dummy for loss
+            mask = torch.ones_like(snr_map)
         else:
-            sharp = mask.pow(2)  # γ=2 ⇒ mid-gray → 0.25, white/black stay ~1/0
+
+            sharp = mask.pow(1.5)
             blended = sharp * curve_enhanced + (1.0 - sharp) * semantic_enhanced
             final = torch.clamp(blended, 0.0, 1.0)
 
-            # ── NEW ▸ trainable global colour correction (with toggles) ───────────────────────
             try:
-                if not self.disable_color_affine:
-                    final = self.colour_head(final)  # 3×3 affine
-                if not self.disable_color_enhancer and self.color_enhancer is not None:
-                    final = self.color_enhancer(final)  # tiny CNN
+                if not getattr(self, "disable_color_affine", False):
+                    final = self.colour_head(final)
+                if self.color_enhancer is not None and not getattr(self, "disable_color_enhancer", False):
+                    final = self.color_enhancer(final)
             except Exception:
                 pass
 
-        # Crop back to original size
-        final = final[..., :H0, :W0]
+            final = final[..., :H0, :W0]
 
-        # Differentiable final color boost if needed
-        MIN_SATURATION_THRESHOLD = 0.15
-        MAX_BOOST_SCALE = 2.0
-        MIN_BOOST_THRESHOLD = 0.01
-        ADDITIONAL_BOOST = 1.0
-        
-        final_saturation = (final.max(dim=1)[0] - final.min(dim=1)[0]).mean()
-        boost_factor = torch.clamp(
-            MAX_BOOST_SCALE * torch.relu(MIN_SATURATION_THRESHOLD - final_saturation) / MIN_SATURATION_THRESHOLD,
-            0.0, 1.0
-        )
-        if boost_factor > MIN_BOOST_THRESHOLD:
-            luminance = 0.299 * final[:, 0:1] + 0.587 * final[:, 1:2] + 0.114 * final[:, 2:3]
-            color_diff = final - luminance
-            scale = 1.0 + boost_factor * ADDITIONAL_BOOST
-            final = luminance + color_diff * scale
-            final = torch.clamp(final, 0.0, 1.0)
+            # Differentiable saturation safety net — smooth ramp instead of hard if/else
+            final_saturation = (final.max(dim=1)[0] - final.min(dim=1)[0]).mean()
+            boost_factor = torch.clamp(2.0 * torch.relu(0.15 - final_saturation) / 0.15, 0.0, 1.0)
+            if boost_factor.item() > 0.01:
+                luminance = 0.299 * final[:, 0:1] + 0.587 * final[:, 1:2] + 0.114 * final[:, 2:3]
+                color_diff = final - luminance
+                scale = 1.0 + boost_factor * 1.0  # ranges from 1.0 to 2.0
+                final = luminance + color_diff * scale
+                final = torch.clamp(final, 0.0, 1.0)
 
-        return {
-            'enhanced': final,
+            return {
+                'enhanced': final,
             'mask': mask[..., :H0, :W0] if mask.shape[2] > H0 or mask.shape[3] > W0 else mask,
             'distraction_mask': distraction_mask[..., :H0, :W0] if distraction_mask.shape[2] > H0 or
                                                                    distraction_mask.shape[3] > W0 else distraction_mask,
@@ -877,12 +836,10 @@ class UnifiedLowLightEnhancer(nn.Module):
             'curves': curves[..., :H0, :W0] if curves.shape[2] > H0 or curves.shape[3] > W0 else curves,
             'curve_enhanced': curve_enhanced[..., :H0, :W0],
             'semantic_enhanced': semantic_enhanced[..., :H0, :W0] if semantic_enhanced.shape[2] > H0 or
-                                                                     semantic_enhanced.shape[
-                                                                         3] > W0 else semantic_enhanced
+                                                                     semantic_enhanced.shape[3] > W0 else semantic_enhanced
         }
 
     def get_model_stats(self, count_frozen: bool = True) -> Dict[str, float]:
-        """Get model statistics"""
         total = sum(p.numel() for p in self.parameters()
                     if count_frozen or p.requires_grad)
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -897,28 +854,16 @@ class UnifiedLowLightEnhancer(nn.Module):
         }
 
     def enable_snr_awareness(self, enable: bool = True):
-        """Enable/disable SNR awareness at runtime"""
         self.use_snr_awareness = enable
 
     def enable_semantic_guidance(self, enable: bool = True):
-        """Enable/disable semantic guidance at runtime"""
         self.use_semantic_guidance = enable
 
-    def enable_color_affine(self, enable: bool = True):
-        """Enable/disable color affine at runtime"""
-        self.disable_color_affine = not enable
 
-    def enable_color_enhancer(self, enable: bool = True):
-        """Enable/disable color enhancer at runtime"""
-        self.disable_color_enhancer = not enable
-
-
-# Keep compatibility aliases
 SemanticGuidedEnhancement = MobileNetSemanticGuidance
 SemanticEmbeddingModule = MobileNetSemanticGuidance
 
 if __name__ == "__main__":
-    # Quick test
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = UnifiedLowLightEnhancer(
         num_iterations=8,
