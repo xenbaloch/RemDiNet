@@ -30,27 +30,27 @@ except ImportError:
 
 
 def color_diversity_loss(enhanced_rgb):
-    """Stronger color diversity enforcement to prevent grayscale outputs"""
+    """Color diversity loss — always returns a differentiable value."""
+    # Channel-wise statistics
     r, g, b = enhanced_rgb[:, 0], enhanced_rgb[:, 1], enhanced_rgb[:, 2]
 
-    # Calculate saturation
-    max_rgb = torch.max(enhanced_rgb, dim=1)[0]
-    min_rgb = torch.min(enhanced_rgb, dim=1)[0]
-    saturation = (max_rgb - min_rgb) / (max_rgb + 1e-8)
-    avg_saturation = saturation.mean()
+    # Pairwise channel differences (want these to be non-zero)
+    rg_diff = (r - g).abs().mean()
+    rb_diff = (r - b).abs().mean()
+    gb_diff = (g - b).abs().mean()
+    avg_diversity = (rg_diff + rb_diff + gb_diff) / 3.0
 
-    # Penalty for low saturation
-    target_saturation = COLOR_THRESHOLDS['target_saturation']
-    if avg_saturation < target_saturation:
-        penalty = ((target_saturation - avg_saturation) / target_saturation) ** 2
-        return penalty
+    # Saturation measure
+    max_rgb = enhanced_rgb.max(dim=1)[0]
+    min_rgb = enhanced_rgb.min(dim=1)[0]
+    saturation = ((max_rgb - min_rgb) / (max_rgb + 1e-8)).mean()
 
-    # Penalize if RGB channels are too similar
-    channel_variance = torch.var(enhanced_rgb, dim=1).mean()
-    if channel_variance < 0.01:
-        return torch.tensor(0.5, device=enhanced_rgb.device)
+    # Target: we want diversity > 0.02 and saturation > 0.10
+    # Loss is HIGH when diversity/saturation are LOW — always differentiable
+    diversity_loss = torch.exp(-15.0 * avg_diversity)   # ≈1 when gray, ≈0 when colorful
+    saturation_loss = torch.exp(-10.0 * saturation)     # ≈1 when gray, ≈0 when saturated
 
-    return torch.tensor(0.0, device=enhanced_rgb.device)
+    return 0.5 * diversity_loss + 0.5 * saturation_loss
 
 
 class SimplifiedDistractionAwareLoss(nn.Module):
@@ -111,9 +111,6 @@ class SimplifiedDistractionAwareLoss(nn.Module):
             except Exception:
                 self.use_perceptual = False
 
-    # ─────────────────────────────────────────────────────────────
-    #  NEW: allow the trainer to update loss weights on-the-fly
-    # ─────────────────────────────────────────────────────────────
     def set_weights(self, w_dict):
         """
         Update any w_* attributes in this loss module.
@@ -167,18 +164,17 @@ class SimplifiedDistractionAwareLoss(nn.Module):
         total_loss += self.w_reconstruction * recon_loss
         loss_dict['reconstruction'] = recon_loss
 
-        # 2. Exposure control
-        exp_loss = self.enhanced_exposure_control_loss(enhanced, input_img)
-        total_loss += self.w_exposure * exp_loss
-        loss_dict['exposure'] = exp_loss
+        if target is None:
+            exp_loss = self.enhanced_exposure_control_loss(enhanced, input_img)
+            total_loss += self.w_exposure * exp_loss
+            loss_dict['exposure'] = exp_loss
+        else:
+            loss_dict['exposure'] = torch.tensor(0.0, device=enhanced.device)
 
-        # 3. Curve Enhancement
         if curves is not None:
             curves_l1 = torch.mean(torch.abs(curves))
-            curve_penalty = torch.relu(curves_l1 - 0.20)
-            total_loss += 0.3 * curve_penalty
-
-            # keep the tensor so it shows up in the logger / progress-bar
+            curve_penalty = torch.relu(curves_l1 - 0.80)
+            total_loss += 0.1 * curve_penalty
             loss_dict['curve_penalty'] = curve_penalty
 
         # 4. Edge Loss (When GT there)
@@ -231,11 +227,7 @@ class SimplifiedDistractionAwareLoss(nn.Module):
         else:
             loss_dict['perceptual'] = torch.tensor(0.0, device=enhanced.device)
 
-        # 9. Mask regularization (Skipped)
-
-        # 10. Mask diversity regularization (Skipped)
-
-        # 11. Soft weight-decay on GlobalColourAffine
+        # 9. Soft weight-decay on GlobalColourAffine
         if self.w_affine_decay > 0 and hasattr(self, 'model_affine_ref'):
             with torch.no_grad():
                 aff_w = self.model_affine_ref.weight
@@ -249,10 +241,10 @@ class SimplifiedDistractionAwareLoss(nn.Module):
             total_loss += self.w_mask_mean * mean_reg
             loss_dict['mask_mean'] = mean_reg
 
-        # ---- NEW: replace NaNs/Infs with zero before clamping ----
+        # Replace NaNs/Infs with zero before clamping
         total_loss = torch.nan_to_num(total_loss, nan=0.0, posinf=5.0, neginf=0.0)
 
-        # Also clean every sub-loss so logging stays sane
+        # Clean every sub-loss so logging stays sane
         for k, v in loss_dict.items():
             if isinstance(v, torch.Tensor):
                 loss_dict[k] = torch.nan_to_num(v, nan=0.0, posinf=2.0, neginf=0.0)
@@ -260,11 +252,6 @@ class SimplifiedDistractionAwareLoss(nn.Module):
         # Clamp after sanitising
         total_loss = torch.clamp(total_loss, 0.0, 5.0)
         loss_dict['total_loss'] = total_loss
-
-        for key, value in loss_dict.items():
-            if isinstance(value, torch.Tensor):
-                loss_dict[key] = torch.nan_to_num(value, nan=0.0, posinf=2.0, neginf=0.0)
-        loss_dict['total_loss'] = torch.clamp(total_loss, 0.0, 5.0)
 
         return loss_dict
 
@@ -400,7 +387,7 @@ class SimplifiedDistractionAwareLoss(nn.Module):
 
 
 class SimpleReconstructionLoss(nn.Module):
-    """Pure reconstruction loss"""
+    """Pure reconstruction loss with SSIM for better structure — FIX #10"""
 
     def __init__(self):
         super(SimpleReconstructionLoss, self).__init__()
@@ -408,7 +395,6 @@ class SimpleReconstructionLoss(nn.Module):
         self.l1 = nn.L1Loss()
 
     def forward(self, results, target=None, input_img=None, epoch=0):
-        # Handle both dict and tensor inputs
         if isinstance(results, dict):
             enhanced = results.get('enhanced', results.get('output'))
             if enhanced is None:
@@ -423,7 +409,6 @@ class SimpleReconstructionLoss(nn.Module):
                                                device=enhanced.device,
                                                dtype=enhanced.dtype)}
 
-        # Clamp inputs for stability
         enhanced = torch.clamp(enhanced, 0.0, 1.0)
         target = torch.clamp(target, 0.0, 1.0)
 
@@ -431,18 +416,25 @@ class SimpleReconstructionLoss(nn.Module):
         l1_loss = self.l1(enhanced, target)
         mse_loss = self.mse(enhanced, target)
 
-        # Weighted combination
-        total_loss = 0.7 * l1_loss + 0.3 * mse_loss
+        ssim_loss = torch.tensor(0.0, device=enhanced.device)
+        if HAS_MS_SSIM:
+            try:
+                ssim_val = ms_ssim(enhanced, target, data_range=1.0, size_average=True)
+                ssim_loss = 1.0 - ssim_val
+            except Exception:
+                pass
 
-        # Safety clamp
+        # Weighted combination: L1 + MSE + SSIM
+        total_loss = 0.5 * l1_loss + 0.2 * mse_loss + 0.3 * ssim_loss
+
         total_loss = torch.nan_to_num(total_loss, nan=0.0, posinf=10.0, neginf=0.0)
         total_loss = torch.clamp(total_loss, 0.0, 10.0)
 
-        # Return in format expected by training loop
         return {
             'total_loss': total_loss,
             'l1_loss': l1_loss,
             'mse_loss': mse_loss,
+            'ssim_loss': ssim_loss,
             'reconstruction': total_loss
         }
 

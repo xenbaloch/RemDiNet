@@ -68,6 +68,8 @@ class MinimalTrainer:
         self.loss_mix = 0.0
         self.old_criterion = None
 
+        self._mask_unfrozen = False
+
         # Training history
         self.history = {
             "train_loss": [],
@@ -93,8 +95,7 @@ class MinimalTrainer:
 
         # ═══════════════════════════════════════════════════════════════
         # OPTIMIZER CONFIGURATION
-        # ════��══════════════════════════════════════════════════════════
-
+        # ═══════════════════════════════════════════════════════════════
         curve_params = [p for n, p in model.named_parameters() if 'curve_estimator' in n]
         mask_params = [p for n, p in model.named_parameters() if 'mask_predictor' in n]
         other_params = [
@@ -108,7 +109,6 @@ class MinimalTrainer:
             {'params': other_params, 'lr': 1e-5, 'name': 'other'},
         ], weight_decay=3e-4)
 
-        # FIXED: Removed 'verbose' parameter
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, mode='max', factor=0.5, patience=8
         )
@@ -173,6 +173,8 @@ class MinimalTrainer:
             # Reset early stopping
             self.patience_count = 0
 
+            self._mask_unfrozen = False
+
             if new_stage == 2:
                 # Freeze mask predictor initially
                 for p in self.model.mask_predictor.parameters():
@@ -219,15 +221,6 @@ class MinimalTrainer:
             else:
                 return mixed_loss
 
-        if epochs_since_switch == 15 and self.stage == 2:
-            for p in self.model.mask_predictor.parameters():
-                p.requires_grad_(True)
-
-            # Slow the mask learning rate
-            for g in self.optimizer.param_groups:
-                if g.get('name') == 'mask':
-                    g['lr'] *= 0.10
-
         if self.stage == 3 and epochs_since_switch < 5 and self.old_criterion is not None:
             self.loss_mix = epochs_since_switch / 5.0
             old_loss_out = self.old_criterion(results, target, input_img, self.epoch)
@@ -256,8 +249,17 @@ class MinimalTrainer:
         self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
 
-        # Cosine-ramp colour weights for Stage-2 warm-up
         epoch_in_stage = self.epoch - self.stage_switch_epoch
+        if self.stage == 2 and epoch_in_stage == 15 and not self._mask_unfrozen:
+            print("🔓 Unfreezing mask predictor")
+            for p in self.model.mask_predictor.parameters():
+                p.requires_grad_(True)
+            for g in self.optimizer.param_groups:
+                if g.get('name') == 'mask':
+                    g['lr'] = 2e-5  
+            self._mask_unfrozen = True
+
+        # Cosine-ramp colour weights for Stage-2 warm-up
         if self.stage == 2:
             colour_w = ramp_colour(get_stage_weights(2), epoch_in_stage, warmup_epochs=10)
             for k, v in colour_w.items():
@@ -309,7 +311,7 @@ class MinimalTrainer:
 
                 # Step only every grad_accum batches
                 if (i + 1) % self.grad_accum == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 
@@ -334,7 +336,8 @@ class MinimalTrainer:
         # Step once more if there is a remainder micro-batch
         total_batches = valid_batches
         if total_batches % self.grad_accum != 0:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
             self.optimizer.step()
             self.optimizer.zero_grad()
 
@@ -354,10 +357,12 @@ class MinimalTrainer:
         total_ssim = 0.0
         total_sat = 0.0
         count = 0
+        skipped = 0
 
         with torch.no_grad():
             for low_light, ground_truth in val_loader:
                 if ground_truth is None:
+                    skipped += 1
                     continue
 
                 try:
@@ -373,9 +378,20 @@ class MinimalTrainer:
                     enhanced = enhanced[:, :, :h, :w]
                     ground_truth = ground_truth[:, :, :h, :w]
 
+                    # Guard against NaN/Inf
+                    if not torch.isfinite(enhanced).all() or not torch.isfinite(ground_truth).all():
+                        skipped += 1
+                        continue
+
                     # Calculate metrics
                     psnr = calculate_psnr(enhanced, ground_truth, normalized=False)
                     ssim = calculate_ms_ssim(enhanced, ground_truth, normalized=False)
+
+                    # Guard against metric NaN
+                    if not torch.isfinite(psnr) or not torch.isfinite(ssim):
+                        skipped += 1
+                        continue
+
                     saturation = self.calculate_saturation(enhanced)
 
                     total_psnr += psnr.item()
@@ -383,8 +399,12 @@ class MinimalTrainer:
                     total_sat += saturation
                     count += 1
 
-                except Exception:
+                except Exception as e:
+                    skipped += 1
                     continue
+
+        if skipped > 0:
+            print(f"  ⚠️ Validation: {skipped} batches skipped ({count} valid)")
 
         if count == 0:
             return {'psnr': 0.0, 'ssim': 0.0, 'saturation': 0.0}
@@ -621,7 +641,7 @@ def main():
                         help='Validation split ratio (0.0-1.0)')
 
     # Stage configuration
-    parser.add_argument('--stage1_frac', type=float, default=0.25,
+    parser.add_argument('--stage1_frac', type=float, default=0.15,
                         help='Fraction of total epochs for Stage 1')
     parser.add_argument('--stage3_frac', type=float, default=0.20,
                         help='Fraction of total epochs for Stage 3')
@@ -666,7 +686,7 @@ def main():
     print(f"  Batch size: {args.batch_size}")
     print(f"  Epochs: {args.num_epochs}")
     print(f"  Image size: {args.image_size}×{args.image_size}")
-    print(f"  Learning rates: curve/mask=1e-4, other=1e-5")
+    print(f"  Learning rates: curve/mask=1e-4, other=2e-5")
     print(f"  Weight decay: 3e-4")
     print(f"  GT pairing: {args.gt_pairing}")
     print(f"Model features:")
@@ -677,6 +697,7 @@ def main():
 
     # Configuration
     config = {
+        'lr': 1e-4,
         'batch_size': args.batch_size,
         'image_size': args.image_size,
         'gt_pairing': args.gt_pairing,
@@ -702,15 +723,13 @@ def main():
         use_contrast_refinement=args.use_contrast_refinement
     )
 
-    # Initialize color preservation
     if hasattr(model, 'colour_head') and hasattr(model.colour_head, 'weight'):
         with torch.no_grad():
-            color_matrix = torch.tensor([
-                [1.1, 0.0, 0.0], [0.0, 1.1, 0.0], [0.0, 0.0, 1.1]
-            ]).view(3, 3, 1, 1)
+            color_matrix = torch.eye(3).view(3, 3, 1, 1) * 1.05
             model.colour_head.weight.data.copy_(color_matrix)
 
     model = model.to(device)
+
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model: {total_params:,} total parameters ({trainable_params:,} trainable)")

@@ -21,12 +21,12 @@ LOSS_WEIGHTS = {
 STAGE_WEIGHTS = {
     # Stage‑1  – reconstruction warm‑up (colour kept modest)
     1: {
-        "w_reconstruction": 1.00,
-        "w_color_consistency": 0.30,
-        "w_color_diversity":   0.50,
+        "w_reconstruction": 1.20,
+        "w_color_consistency": 0.20,
+        "w_color_diversity":   0.30,
         "w_exposure":          0.00,
         "w_edge":              0.00,
-        "w_ssim":              0.50,
+        "w_ssim":              0.60,
         "w_perceptual":        0.00,
         "w_mask_mean":         0.00,
     },
@@ -34,23 +34,23 @@ STAGE_WEIGHTS = {
     2: {
         "w_reconstruction":    1.35,
         "w_exposure":          0.07,
-        "w_edge":              0.09,
-        "w_ssim":              0.25,
-        "w_color_consistency": 0.05,
-        "w_color_diversity":   0.05,
-        "w_mask_mean":         0.05,
+        "w_edge":              0.12,
+        "w_ssim":              0.45,
+        "w_color_consistency": 0.07,
+        "w_color_diversity":   0.07,
+        "w_mask_mean":         0.03,
         "w_perceptual":        0.00,
     },
     # Stage‑3  – perceptual fine‑tune
     3: {
-        "w_reconstruction":    0.95,
-        "w_exposure":          0.08,
-        "w_edge":              0.18,
-        "w_ssim":              0.28,
-        "w_color_consistency": 0.15,
-        "w_color_diversity":   0.20,
-        "w_mask_mean":         0.10,
-        "w_perceptual":        0.04,
+        "w_reconstruction":    0.90,
+        "w_exposure":          0.04,
+        "w_edge":              0.20,
+        "w_ssim":              0.45,
+        "w_color_consistency": 0.10,
+        "w_color_diversity":   0.12,
+        "w_mask_mean":         0.08,
+        "w_perceptual":        0.06,
     },
 }
 
@@ -67,10 +67,10 @@ EARLY_STOPPING_CONFIG = {
 #  Colour‑preservation thresholds used by validation hooks
 # -----------------------------------------------------------------------------
 COLOR_THRESHOLDS = {
-    "min_saturation": 0.18,   # match real val‑set stats
-    "critical_saturation": 0.05,
-    "target_saturation":   0.35,
-    "saturation_penalty_factor": 1.5,  # softer penalty → PSNR not masked
+    "min_saturation": 0.10,   # match real val‑set stats
+    "critical_saturation": 0.04,
+    "target_saturation":   0.30,
+    "saturation_penalty_factor": 1.0,  # softer penalty → PSNR not masked
 }
 
 # -----------------------------------------------------------------------------
@@ -81,8 +81,8 @@ TRAINING_DEFAULTS = {
     "learning_rate_curves_multiplier": 2.0,
     "weight_decay":               1e-4,
     "gradient_clip_norm":         0.5,
-    "batch_size":                 4,
-    "image_size":                 320,
+    "batch_size":                 8,
+    "image_size":                 512,
     "num_epochs":                 60,
     "val_split":                  0.2,
 }
@@ -105,7 +105,7 @@ def get_early_stopping_config(stage: int) -> dict:
 
 # ----  Cosine ramp‑in for colour weights  -----------------------------------
 
-def ramp_colour(weights: dict, epoch_in_stage: int, warmup_epochs: int = 15) -> dict:
+def ramp_colour(weights: dict, epoch_in_stage: int, warmup_epochs: int = 20) -> dict:
     """Cosine‑ramp colour‑related weights during the first *warmup_epochs*
     after a stage switch – prevents sudden PSNR dip when colour terms appear."""
     if epoch_in_stage >= warmup_epochs:
@@ -115,8 +115,7 @@ def ramp_colour(weights: dict, epoch_in_stage: int, warmup_epochs: int = 15) -> 
     ramp = 0.5 * (1 - math.cos(math.pi * epoch_in_stage / warmup_epochs))
 
     RAMP_KEYS = (
-        "w_reconstruction", "w_color_consistency", "w_color_diversity",
-        "w_exposure", "w_edge", "w_ssim"
+        "w_color_consistency", "w_color_diversity", "w_exposure", "w_edge",
     )
 
     for k in RAMP_KEYS:

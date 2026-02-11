@@ -14,8 +14,8 @@ class EnhancedGlobalColorCorrection(nn.Module):
         self.weight = nn.Parameter(torch.eye(3).view(3, 3, 1, 1))
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
 
-        # Learnable vibrance/saturation control (start at 1.0 = neutral)
-        self.vibrance_factor = nn.Parameter(torch.tensor(1.0))
+        # Learnable vibrance/saturation control
+        self.vibrance_factor = nn.Parameter(torch.tensor(1.2))
 
         # Per-channel gamma correction (start at 1.0 = neutral)
         self.channel_gamma = nn.Parameter(torch.tensor([1.0, 1.0, 1.0]))
@@ -29,11 +29,11 @@ class EnhancedGlobalColorCorrection(nn.Module):
         def clamp_weights_hook(module, input):
             with torch.no_grad():
                 # Tightened: near-identity clamps
-                self.weight.data.clamp_(0.9, 1.1)
-                self.bias.data.clamp_(-0.03, 0.03)
-                self.vibrance_factor.data.clamp_(0.95, 1.15)
-                # Tightened: gamma clamp to 0.9 - 1.1 (instead of 0.8 - 1.0)
-                self.channel_gamma.data.clamp_(0.9, 1.1)
+                self.weight.data.clamp_(0.98, 1.02)
+                self.bias.data.clamp_(-0.01, 0.01)
+                self.vibrance_factor.data.clamp_(0.98, 1.05)
+                # Tightened: gamma clamp to 0.95 - 1.05
+                self.channel_gamma.data.clamp_(0.95, 1.05)
 
         self.register_forward_pre_hook(clamp_weights_hook)
 
