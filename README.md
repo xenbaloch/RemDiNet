@@ -94,9 +94,8 @@ RemDiNet works with popular low-light datasets:
 
 - **LOL** (Low-Light dataset)
 - **LOL-v2** (Real and Synthetic)
-- **MIT-Adobe FiveK (sRGB)**
 - **SID (sRGB)**
-- Custom low-light datasets
+- Custom low-light datasets 
 
 ### Data Pairing Strategies
 
