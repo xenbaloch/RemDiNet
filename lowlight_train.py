@@ -103,6 +103,7 @@ class MinimalTrainer:
             if 'curve_estimator' not in n and 'mask_predictor' not in n
         ]
 
+        # Use a lower LR for the rest of the network
         self.optimizer = AdamW([
             {'params': curve_params, 'lr': 1e-4, 'name': 'curve'},
             {'params': mask_params, 'lr': 1e-4, 'name': 'mask'},
@@ -173,6 +174,7 @@ class MinimalTrainer:
             # Reset early stopping
             self.patience_count = 0
 
+            # FIX #2: Reset one-shot flag on stage change
             self._mask_unfrozen = False
 
             if new_stage == 2:
@@ -190,6 +192,12 @@ class MinimalTrainer:
             # Refresh scheduler
             remaining = (self.max_epochs - self.epoch) if self.max_epochs else 60
             remaining = max(10, int(remaining))
+
+            # Stage 3: reduce LR to 1/5 of current for fine-tuning (prevents overfitting)
+            if new_stage == 3:
+                for g in self.optimizer.param_groups:
+                    g['lr'] = g['lr'] * 0.2
+
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max=remaining, eta_min=1e-6)
 
     def get_mixed_loss(self, results, target, input_img):
@@ -235,6 +243,8 @@ class MinimalTrainer:
                 return out
             return mixed_loss
 
+        # Transition complete — use pure stage loss
+        self.loss_mix = 1.0
         return self.criterion(results, target, input_img, self.epoch)
 
     def calculate_saturation(self, tensor):
@@ -256,7 +266,7 @@ class MinimalTrainer:
                 p.requires_grad_(True)
             for g in self.optimizer.param_groups:
                 if g.get('name') == 'mask':
-                    g['lr'] = 2e-5  
+                    g['lr'] = 2e-5  # Absolute set, not multiplicative
             self._mask_unfrozen = True
 
         # Cosine-ramp colour weights for Stage-2 warm-up
@@ -287,6 +297,12 @@ class MinimalTrainer:
                 ground_truth = ground_truth.to(self.device)
 
             try:
+                # Stage-3 regularization: small input noise to prevent memorization
+                if self.stage == 3:
+                    noise_std = 0.01 * max(0, 1.0 - (self.epoch - self.stage_switch_epoch) / 50.0)
+                    if noise_std > 0:
+                        low_light = low_light + torch.randn_like(low_light) * noise_std
+
                 # Forward pass
                 results = self.model(low_light)
                 enhanced = results.get('enhanced', results) if isinstance(results, dict) else results
@@ -434,6 +450,7 @@ class MinimalTrainer:
         checkpoint = {
             'epoch': self.epoch,
             'stage': self.stage,
+            'stage_switch_epoch': self.stage_switch_epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'best_psnr': self.best_psnr,
@@ -465,7 +482,8 @@ class MinimalTrainer:
 
         start_time = time.time()
 
-        for epoch in range(max_epochs):
+        start_epoch = self.epoch if self.epoch > 0 else 0
+        for epoch in range(start_epoch, max_epochs):
             self.epoch = epoch
             self.update_stage()
 
@@ -632,7 +650,7 @@ def main():
                         help='Batch size for training')
     parser.add_argument('--num_epochs', type=int, default=200,
                         help='Total number of training epochs')
-    parser.add_argument('--image_size', type=int, default=512,
+    parser.add_argument('--image_size', type=int, default=256,
                         help='Training image size (crops to image_size × image_size)')
     parser.add_argument('--gt_pairing', type=str, default='flexible',
                         choices=['strict', 'flexible', 'none'],
@@ -686,7 +704,7 @@ def main():
     print(f"  Batch size: {args.batch_size}")
     print(f"  Epochs: {args.num_epochs}")
     print(f"  Image size: {args.image_size}×{args.image_size}")
-    print(f"  Learning rates: curve/mask=1e-4, other=2e-5")
+    print(f"  Learning rates: curve/mask=1e-4, other=1e-5")
     print(f"  Weight decay: 3e-4")
     print(f"  GT pairing: {args.gt_pairing}")
     print(f"Model features:")
@@ -723,10 +741,11 @@ def main():
         use_contrast_refinement=args.use_contrast_refinement
     )
 
+    # Initialize colour_head as pure identity — no initial color bias
     if hasattr(model, 'colour_head') and hasattr(model.colour_head, 'weight'):
         with torch.no_grad():
-            color_matrix = torch.eye(3).view(3, 3, 1, 1) * 1.05
-            model.colour_head.weight.data.copy_(color_matrix)
+            model.colour_head.weight.data.copy_(torch.eye(3).view(3, 3, 1, 1))
+            model.colour_head.bias.data.zero_()
 
     model = model.to(device)
 
