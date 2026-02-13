@@ -149,7 +149,6 @@ copies of the Software...
 **Zain**  
 📧 Email: [mzain771@outlook.com](mailto:mzain771@outlook.com)  
 🐙 GitHub: [xenbaloch](https://github.com/xenbaloch)  
-🔗 Project:  [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
 
 ---
 
@@ -157,7 +156,6 @@ copies of the Software...
 
 - **2026-01**:  Initial public release
 - Pre-trained models (coming soon)
-- Paper submission (in progress)
 
 ---
 
