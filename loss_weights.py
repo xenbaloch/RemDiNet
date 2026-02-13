@@ -1,4 +1,5 @@
 import math
+from typing import Optional, Dict
 
 # -----------------------------------------------------------------------------
 #  Generic (stage-independent) base weights – seldom touched during training
@@ -19,23 +20,23 @@ LOSS_WEIGHTS = {
 #  Stage-specific overrides (copied & blended inside the trainer)
 # -----------------------------------------------------------------------------
 STAGE_WEIGHTS = {
-    # Stage-1: reconstruction with mild SSIM emphasis
+    # Stage-1: reconstruction with the SSIM emphasis
     1: {
         "w_reconstruction": 1.20,
         "w_color_consistency": 0.20,
         "w_color_diversity":   0.30,
         "w_exposure":          0.00,
         "w_edge":              0.00,
-        "w_ssim":              0.60,
+        "w_ssim":              0.80,
         "w_perceptual":        0.00,
         "w_mask_mean":         0.00,
     },
     # Stage-2: balance structure and color
     2: {
-        "w_reconstruction":    1.35,
+        "w_reconstruction":    1.20,
         "w_exposure":          0.07,
         "w_edge":              0.12,
-        "w_ssim":              0.45,
+        "w_ssim":              0.65,
         "w_color_consistency": 0.07,
         "w_color_diversity":   0.07,
         "w_mask_mean":         0.03,
@@ -43,14 +44,14 @@ STAGE_WEIGHTS = {
     },
     # Stage-3: perceptual refinement
     3: {
-        "w_reconstruction":    0.90,
+        "w_reconstruction":    1.10,
         "w_exposure":          0.04,
-        "w_edge":              0.20,
-        "w_ssim":              0.45,
-        "w_color_consistency": 0.10,
-        "w_color_diversity":   0.12,
-        "w_mask_mean":         0.08,
-        "w_perceptual":        0.06,
+        "w_edge":              0.15,
+        "w_ssim":              0.55,
+        "w_color_consistency": 0.08,
+        "w_color_diversity":   0.08,
+        "w_mask_mean":         0.05,
+        "w_perceptual":        0.03,
     },
 }
 
@@ -74,7 +75,7 @@ COLOR_THRESHOLDS = {
 }
 
 # -----------------------------------------------------------------------------
-#  Optim-level defaults (unchanged)
+#  Optim-level defaults 
 # -----------------------------------------------------------------------------
 TRAINING_DEFAULTS = {
     "learning_rate":              5e-4,
@@ -120,7 +121,7 @@ def ramp_colour(weights: dict, epoch_in_stage: int, warmup_epochs: int = 20) -> 
             out[k] *= ramp
     return out
 
-def get_adaptive_color_weights(current_saturation: float, base_weights: dict | None = None) -> dict:
+def get_adaptive_color_weights(current_saturation: float, base_weights: Optional[Dict] = None) -> Dict:
     """Optional dynamic tweak based on current image saturation."""
     if base_weights is None:
         base_weights = LOSS_WEIGHTS
