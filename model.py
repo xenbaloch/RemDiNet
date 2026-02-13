@@ -595,17 +595,17 @@ class ImprovedCurveEstimator(nn.Module):
         )
 
         with torch.no_grad():
-            self.curve_net[-2].weight.data *= 0.02
-            self.curve_net[-2].bias.data.fill_(0.0)
+            self.curve_net[-2].weight.data *= 0.1
+            self.curve_net[-2].bias.data.fill_(0.01) # slight positive bias to encourage brightening
 
     def enhance_image(self, rgb: torch.Tensor, curves: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Apply curves to 3-ch RGB with adaptive brightness-aware scaling."""
         batch_size, _, height, width = rgb.shape
-        base_scale = 0.25
+        base_scale = 0.5
 
         # Adaptive: darker channels get stronger boost
         channel_brightness = rgb.mean(dim=[2, 3], keepdim=True)
-        channel_factors = torch.clamp(0.7 - channel_brightness, 0.05, 0.5)
+        channel_factors = torch.clamp(0.8 - channel_brightness, 0.1, 0.7)  
         adaptive_scale = base_scale * channel_factors
 
         curves_reshaped = curves.view(batch_size, self.num_iterations, 3, height, width)
@@ -613,7 +613,7 @@ class ImprovedCurveEstimator(nn.Module):
 
         enhanced = rgb
         for i in range(self.num_iterations):
-            delta = curves_reshaped[:, i, :, :, :] * (1.0 - enhanced) * 0.30
+            delta = curves_reshaped[:, i, :, :, :] * (1.0 - enhanced) * 0.5 
             enhanced = enhanced + delta
             enhanced = torch.clamp(enhanced, 0.0, 1.0)
 
@@ -686,12 +686,10 @@ class UnifiedLowLightEnhancer(nn.Module):
         self.use_task_saliency = use_task_saliency
         self.use_contrast_refinement = use_contrast_refinement
 
-        # Color enhancement components (safer defaults)
-        self.colour_head = GlobalColourAffine(enable_vibrance=False, identity_clamp=0.15)
-        try:
-            self.color_enhancer = EnhancedGlobalColorCorrection()
-        except Exception:
-            self.color_enhancer = None
+        # Color enhancement components (Warning: use ONLY one module to prevent color cast)
+        self.colour_head = GlobalColourAffine(enable_vibrance=True, identity_clamp=0.08)
+        # Disable second color module (Warning: double affine causes sepia drift)
+        self.color_enhancer = None
 
         # Runtime toggles (can be set externally)
         self.disable_color_affine = False
@@ -802,8 +800,7 @@ class UnifiedLowLightEnhancer(nn.Module):
             mask = torch.ones_like(snr_map)
         else:
 
-            sharp = mask.pow(1.5)
-            blended = sharp * curve_enhanced + (1.0 - sharp) * semantic_enhanced
+            blended = mask * curve_enhanced + (1.0 - mask) * semantic_enhanced
             final = torch.clamp(blended, 0.0, 1.0)
 
             try:
@@ -815,16 +812,6 @@ class UnifiedLowLightEnhancer(nn.Module):
                 pass
 
             final = final[..., :H0, :W0]
-
-            # Differentiable saturation safety net — smooth ramp instead of hard if/else
-            final_saturation = (final.max(dim=1)[0] - final.min(dim=1)[0]).mean()
-            boost_factor = torch.clamp(2.0 * torch.relu(0.15 - final_saturation) / 0.15, 0.0, 1.0)
-            if boost_factor.item() > 0.01:
-                luminance = 0.299 * final[:, 0:1] + 0.587 * final[:, 1:2] + 0.114 * final[:, 2:3]
-                color_diff = final - luminance
-                scale = 1.0 + boost_factor * 1.0  # ranges from 1.0 to 2.0
-                final = luminance + color_diff * scale
-                final = torch.clamp(final, 0.0, 1.0)
 
             return {
                 'enhanced': final,
