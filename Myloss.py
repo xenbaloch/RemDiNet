@@ -45,10 +45,8 @@ def color_diversity_loss(enhanced_rgb):
     min_rgb = enhanced_rgb.min(dim=1)[0]
     saturation = ((max_rgb - min_rgb) / (max_rgb + 1e-8)).mean()
 
-    # Target: we want diversity > 0.02 and saturation > 0.10
-    # Loss is HIGH when diversity/saturation are LOW — always differentiable
-    diversity_loss = torch.exp(-15.0 * avg_diversity)   # ≈1 when gray, ≈0 when colorful
-    saturation_loss = torch.exp(-10.0 * saturation)     # ≈1 when gray, ≈0 when saturated
+    diversity_loss = torch.exp(-15.0 * avg_diversity)
+    saturation_loss = torch.exp(-10.0 * saturation)
 
     return 0.5 * diversity_loss + 0.5 * saturation_loss
 
@@ -365,17 +363,20 @@ class SimplifiedDistractionAwareLoss(nn.Module):
         return F.mse_loss(enhanced_hue, reference_hue)
 
     def simple_perceptual_loss(self, enhanced: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Simple perceptual loss using early VGG features"""
+        """Simple perceptual loss using early VGG features with proper ImageNet normalization"""
         if self.vgg is None:
             return torch.tensor(0.0, device=enhanced.device)
 
         try:
-            # Convert [0,1] → [-1,1] for VGG
+            # VGG expects ImageNet normalization, not [-1,1]
+            mean = torch.tensor([0.485, 0.456, 0.406], device=enhanced.device).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], device=enhanced.device).view(1, 3, 1, 1)
+
             def _norm(x: torch.Tensor) -> torch.Tensor:
-                return (x - 0.5) * 2.0
+                return (x - mean) / std
 
             enhanced_feat = self.vgg(_norm(enhanced))
-            target_feat = self.vgg(_norm(target))
+            target_feat = self.vgg(_norm(target.detach()))
 
             # L1 over early-layer feature maps
             perceptual = F.l1_loss(enhanced_feat, target_feat)
