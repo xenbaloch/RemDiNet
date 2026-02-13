@@ -4,23 +4,15 @@ import torch.nn.functional as F
 
 
 class EnhancedGlobalColorCorrection(nn.Module):
-    """
-    Enhanced color correction with vibrance control and proper gamma handling
-    """
-
     def __init__(self):
         super().__init__()
-        # More flexible color transform matrix (start at identity)
         self.weight = nn.Parameter(torch.eye(3).view(3, 3, 1, 1))
         self.bias = nn.Parameter(torch.zeros(3, 1, 1))
 
-        # Learnable vibrance/saturation control
+        # Start with a mild boost
         self.vibrance_factor = nn.Parameter(torch.tensor(1.2))
-
-        # Per-channel gamma correction (start at 1.0 = neutral)
         self.channel_gamma = nn.Parameter(torch.tensor([1.0, 1.0, 1.0]))
 
-        # Register post-optimization hook to clamp weights
         self._register_weight_clamping()
 
     def _register_weight_clamping(self):
@@ -28,11 +20,13 @@ class EnhancedGlobalColorCorrection(nn.Module):
 
         def clamp_weights_hook(module, input):
             with torch.no_grad():
-                # Tightened: near-identity clamps
-                self.weight.data.clamp_(0.98, 1.02)
+                # Clamp near identity: diagonal near 1.0, off-diagonal near 0.0
+                eye = torch.eye(3, device=self.weight.device).view(3, 3, 1, 1)
+                low = eye - 0.05
+                high = eye + 0.05
+                self.weight.data = torch.clamp(self.weight.data, min=low, max=high)
                 self.bias.data.clamp_(-0.01, 0.01)
                 self.vibrance_factor.data.clamp_(0.98, 1.05)
-                # Tightened: gamma clamp to 0.95 - 1.05
                 self.channel_gamma.data.clamp_(0.95, 1.05)
 
         self.register_forward_pre_hook(clamp_weights_hook)
@@ -65,7 +59,7 @@ class EnhancedGlobalColorCorrection(nn.Module):
         saturation = (max_rgb - min_rgb) / (max_rgb + 1e-8)
 
         # Vibrance: boost less saturated colors more than already saturated ones
-        vibrance_mask = 1.0 - saturation  # Less saturated = higher boost
+        vibrance_mask = 1.0 - saturation
         boost_factor = 1.0 + (factor - 1.0) * vibrance_mask
 
         # Apply vibrance
@@ -110,10 +104,10 @@ class AdaptiveColorEnhancement(nn.Module):
         params = self.param_net(stats)
 
         # Scale parameters to useful ranges
-        vibrance = 0.8 + 1.2 * params[:, 0:1]  # 0.8 to 2.0
-        gammas = 0.6 + 0.8 * params[:, 1:4]  # 0.6 to 1.4
-        curve_strength = params[:, 4:5]  # 0 to 1
-        curve_shift = params[:, 5:6] - 0.5  # -0.5 to 0.5
+        vibrance = 0.8 + 1.2 * params[:, 0:1]
+        gammas = 0.6 + 0.8 * params[:, 1:4]
+        curve_strength = params[:, 4:5]
+        curve_shift = params[:, 5:6] - 0.5
 
         # Apply adaptive enhancements
         x = self.apply_s_curve(x, curve_strength, curve_shift)
@@ -152,7 +146,6 @@ class AdaptiveColorEnhancement(nn.Module):
 
     def apply_s_curve(self, x, strength, shift):
         """Apply S-curve for contrast enhancement"""
-        # S-curve formula: y = 1 / (1 + exp(-k*(x-0.5)))
         # Reshape parameters for broadcasting
         strength = strength.view(-1, 1, 1, 1) * 10  # Scale to useful range
         shift = shift.view(-1, 1, 1, 1)
@@ -190,9 +183,9 @@ class AdaptiveColorEnhancement(nn.Module):
 
 # Test time color enhancement function
 def enhance_colors_post_process(image_tensor,
-                                vibrance_boost=1.0,  # Neutral (was 1.2)
-                                gamma=1.0,  # Neutral (was 0.9)
-                                saturation_boost=1.0):  # Neutral (was 1.1)
+                                vibrance_boost=1.10,
+                                gamma=1.0,
+                                saturation_boost=1.10):
     """
     Post-processing color enhancement for test time
     Can be applied after model inference for extra color pop
@@ -246,7 +239,7 @@ def rgb_to_hsv(rgb):
     hue[mask_g] = (b[mask_g] - r[mask_g]) / diff[mask_g] + 2
     hue[mask_b] = (r[mask_b] - g[mask_b]) / diff[mask_b] + 4
 
-    hue = hue / 6  # Normalize to [0, 1]
+    hue = hue / 6
 
     # Saturation
     sat = torch.where(max_rgb > 0, diff / max_rgb, torch.zeros_like(max_rgb))
@@ -259,7 +252,6 @@ def rgb_to_hsv(rgb):
 
 def hsv_to_rgb(hsv):
     """Convert HSV to RGB color space without 1D-cat errors."""
-    # hsv: [B,3,H,W], h∈[0,1)→multiply by 6 for sector
     h, s, v = hsv[:, 0:1] * 6, hsv[:, 1:2], hsv[:, 2:3]
 
     c = v * s
@@ -297,5 +289,6 @@ def hsv_to_rgb(hsv):
         out[:, 0][mask] = r_val + m_img[mask]
         out[:, 1][mask] = g_val + m_img[mask]
         out[:, 2][mask] = b_val + m_img[mask]
+
 
     return out
