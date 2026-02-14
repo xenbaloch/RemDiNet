@@ -110,19 +110,55 @@ Specify via `--gt_pairing` argument in training.
 ---
 
 
-### Training Stages
+## Train/ Test
 
-RemDiNet uses a **three-stage training strategy**: 
 
-1. **Stage 1 (25% epochs)**: Reconstruction warm-up with basic color preservation
-2. **Stage 2 (55% epochs)**: Structure learning with SSIM, edge losses, and color diversity
-3. **Stage 3 (20% epochs)**: Perceptual refinement with VGG-based loss
+### Default train run (lowlight_train.py)
 
-Smooth transitions between stages prevent training instability.
+--data_root
+./data
+--experiment_name
+RemoveDistraction
+--batch_size
+8
+--num_epochs
+200
+--use_semantic_guidance
+--use_snr_awareness
+--use_learnable_snr
+--gt_pairing
+flexible
+--num_workers
+4
+--stage1_frac
+0.10
+--stage3_frac
+0.25
 
 ---
 
+### Default test run (lowlight_test.py)
 
+--model_path
+./experiments/RemoveDistraction/checkpoints/best_model.pth
+--test_dir
+./data/test_data
+--output_dir
+./results
+--gt_dir
+./data/test_gt
+
+---
+
+### Training stages
+
+RemDiNet uses a **three-stage training strategy**: 
+
+1. **Stage 1**: Reconstruction warm-up with basic color preservation
+2. **Stage 2**: Structure learning with SSIM, edge losses, and color diversity
+3. **Stage 3**: Perceptual refinement with VGG-based loss
+
+Smooth transitions between stages prevent training instability.
 
 ---
 
