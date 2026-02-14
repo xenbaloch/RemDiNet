@@ -650,7 +650,7 @@ def main():
                         help='Batch size for training')
     parser.add_argument('--num_epochs', type=int, default=200,
                         help='Total number of training epochs')
-    parser.add_argument('--image_size', type=int, default=256,
+    parser.add_argument('--image_size', type=int, default=512,
                         help='Training image size (crops to image_size × image_size)')
     parser.add_argument('--gt_pairing', type=str, default='flexible',
                         choices=['strict', 'flexible', 'none'],
