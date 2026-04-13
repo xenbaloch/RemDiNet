@@ -1,13 +1,15 @@
 # Remove the Distraction (RemDiNet)
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue. svg)](https://www.python.org/downloads/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.12+-red.svg)](https://pytorch.org/)
 [![License:  MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 RemDiNet is a PyTorch LLIE framework that suppresses distraction by fusing SNR (Signal-to-Noise Ratio) cues with class-agnostic saliency, enabling robust, color-consistent enhancement and effective learning with limited paired supervision.
 
-> **Paper (In Submission)**: *Remove the Distraction: Semantic-SNR Guided Low-Light Image Enhancement under Flexible Supervision*  
-> **Code & Data**: [https://github.com/xenbaloch/RemDiNet](https://github.com/xenbaloch/RemDiNet)
+> ## 📄 Paper 
+
+[![Paper](https://img.shields.io/badge/Paper-Pattern%20Recognition%202026-blue)](https://www.sciencedirect.com/science/article/pii/S0031320326006084)
+
 
 ## 🔧 Installation
 
@@ -188,6 +190,7 @@ copies of the Software...
 
 ---
 
+
 ## 🔄 Updates
 
 - **2026-01**:  Initial public release
@@ -195,4 +198,19 @@ copies of the Software...
 
 ---
 
-**Happy Enhancing! 🌟**
+## 📌 Citation
+
+If you find this work useful, please consider citing:
+
+```bibtex
+@article{ZAINULABIDEEN2026113643,
+  title = {Remove the distraction: Semantic-SNR guided low-light image enhancement under flexible supervision},
+  journal = {Pattern Recognition},
+  volume = {179},
+  pages = {113643},
+  year = {2026},
+  doi = {https://doi.org/10.1016/j.patcog.2026.113643},
+  url = {https://www.sciencedirect.com/science/article/pii/S0031320326006084},
+  author = {Muhammad {Zain Ul Abideen} and Benzhuang Zhang and Risheng Liu}
+}
+
